@@ -7,7 +7,13 @@ import '../models/game_mode.dart';
 
 class MatchmakingScreen extends StatefulWidget {
   final GameMode gameMode;
-  const MatchmakingScreen({super.key, required this.gameMode});
+  /// 실제 매칭 API 연결 시 서버에서 수신한 세션 ID로 교체
+  final String matchSessionId;
+  const MatchmakingScreen({
+    super.key,
+    required this.gameMode,
+    this.matchSessionId = '',
+  });
 
   @override
   State<MatchmakingScreen> createState() => _MatchmakingScreenState();
@@ -39,7 +45,10 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
     _matchTimer = Timer(const Duration(seconds: 5), () {
       if (!mounted) return;
       Navigator.of(context).pushReplacement(PageRouteBuilder(
-        pageBuilder: (_, __, ___) => MatchFoundScreen(gameMode: widget.gameMode),
+        pageBuilder: (_, __, ___) => MatchFoundScreen(
+          gameMode: widget.gameMode,
+          matchSessionId: widget.matchSessionId,
+        ),
         transitionsBuilder: (_, anim, __, child) => FadeTransition(
           opacity: anim, child: child,
         ),

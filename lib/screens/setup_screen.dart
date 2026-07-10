@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/game_mode.dart';
+import '../models/setup_number_request.dart';
+import '../services/game_websocket_service.dart';
+import '../services/token_storage.dart';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -45,7 +48,12 @@ extension _CategoryX on _Category {
 
 class SetupScreen extends StatefulWidget {
   final GameMode gameMode;
-  const SetupScreen({super.key, required this.gameMode});
+  final String matchSessionId;
+  const SetupScreen({
+    super.key,
+    required this.gameMode,
+    required this.matchSessionId,
+  });
 
   @override
   State<SetupScreen> createState() => _SetupScreenState();
@@ -61,6 +69,14 @@ class _SetupScreenState extends State<SetupScreen> {
 
   int? _selectedNumber;
 
+  // WebSocket 상태
+  WsStatus _wsStatus = WsStatus.connecting;
+  final _ws = GameWebSocketService.instance;
+  final _tokenStorage = TokenStorage();
+
+  // 제출 중 로딩
+  bool _isSubmitting = false;
+
   Set<int> get _assignedNumbers {
     final result = <int>{};
     for (final list in _slots.values) {
@@ -75,6 +91,38 @@ class _SetupScreenState extends State<SetupScreen> {
       _slots.values.fold(0, (sum, list) => sum + list.length);
 
   bool get _isComplete => _assignedNumbers.length == _totalSlots;
+
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
+
+  @override
+  void initState() {
+    super.initState();
+    _connectWebSocket();
+  }
+
+  Future<void> _connectWebSocket() async {
+    final token = await _tokenStorage.getAccessToken();
+    if (token == null || token.isEmpty) {
+      if (mounted) setState(() => _wsStatus = WsStatus.error);
+      return;
+    }
+    _ws.connect(
+      accessToken: token,
+      onConnected: () {
+        if (mounted) setState(() => _wsStatus = WsStatus.connected);
+      },
+      onError: (msg) {
+        if (mounted) setState(() => _wsStatus = WsStatus.error);
+        _showSnackBar('WebSocket 연결 실패: $msg', isError: true);
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _ws.disconnect();
+    super.dispose();
+  }
 
   void _onPoolTap(int number) {
     setState(() {
@@ -106,8 +154,53 @@ class _SetupScreenState extends State<SetupScreen> {
     });
   }
 
-  void _onSubmit() {
-    // TODO: send SetupNumberRequest via WebSocket and navigate to gameplay
+  Future<void> _onSubmit() async {
+    if (!_isComplete || _isSubmitting) return;
+
+    if (!_ws.isConnected) {
+      _showSnackBar('서버에 연결되어 있지 않습니다. 잠시 후 다시 시도해주세요.', isError: true);
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+
+    final request = SetupNumberRequest(
+      outNumList: _slots[_Category.out]!.whereType<int>().toList(),
+      dpNumList: _slots[_Category.doublePlay]!.whereType<int>().toList(),
+      tripleNumList: _slots[_Category.triple]!.whereType<int>().toList(),
+      hrNumList: _slots[_Category.homerun]!.whereType<int>().toList(),
+    );
+
+    final sent = _ws.sendSetupNumbers(
+      matchSessionId: widget.matchSessionId,
+      request: request,
+    );
+
+    if (!mounted) return;
+    setState(() => _isSubmitting = false);
+
+    if (sent) {
+      // TODO: 서버 응답(구독 토픽)을 수신한 뒤 게임플레이 화면으로 전환
+      _showSnackBar('셋업 숫자가 제출되었습니다!');
+    } else {
+      _showSnackBar('전송에 실패했습니다. 다시 시도해주세요.', isError: true);
+    }
+  }
+
+  void _showSnackBar(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message,
+            style: const TextStyle(fontWeight: FontWeight.w600)),
+        backgroundColor:
+            isError ? const Color(0xFFD32F2F) : const Color(0xFF388E3C),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+        duration: Duration(seconds: isError ? 4 : 2),
+      ),
+    );
   }
 
   // ── Build ──────────────────────────────────────────────────────────────────
@@ -215,31 +308,66 @@ class _SetupScreenState extends State<SetupScreen> {
             ),
           ]),
           const Spacer(),
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-            decoration: BoxDecoration(
-              color: _isComplete
-                  ? const Color(0xFF7CFC00).withValues(alpha: 0.22)
-                  : Colors.white.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: _isComplete
-                    ? const Color(0xFF7CFC00).withValues(alpha: 0.55)
-                    : Colors.white.withValues(alpha: 0.22),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              // 슬롯 카운터
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _isComplete
+                      ? const Color(0xFF7CFC00).withValues(alpha: 0.22)
+                      : Colors.white.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: _isComplete
+                        ? const Color(0xFF7CFC00).withValues(alpha: 0.55)
+                        : Colors.white.withValues(alpha: 0.22),
+                  ),
+                ),
+                child: Text(
+                  '$count / $_totalSlots',
+                  style: TextStyle(
+                    color:
+                        _isComplete ? const Color(0xFF7CFC00) : Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
-            ),
-            child: Text(
-              '$count / $_totalSlots',
-              style: TextStyle(
-                color: _isComplete ? const Color(0xFF7CFC00) : Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
+              const SizedBox(height: 6),
+              // WebSocket 연결 상태 뱃지
+              _buildWsBadge(),
+            ],
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildWsBadge() {
+    final (label, color, icon) = switch (_wsStatus) {
+      WsStatus.connecting => ('연결 중...', const Color(0xFFFFD700), Icons.sync_rounded),
+      WsStatus.connected => ('연결됨', const Color(0xFF7CFC00), Icons.wifi_rounded),
+      WsStatus.error => ('연결 실패', const Color(0xFFFF5252), Icons.wifi_off_rounded),
+      WsStatus.disconnected => ('연결 끊김', const Color(0xFF9E9E9E), Icons.wifi_off_rounded),
+    };
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, color: color, size: 11),
+        const SizedBox(width: 3),
+        Text(
+          label,
+          style: TextStyle(
+            color: color,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
     );
   }
 
@@ -446,18 +574,21 @@ class _SetupScreenState extends State<SetupScreen> {
 
   Widget _buildActionButtons() {
     final complete = _isComplete;
+    final canSubmit =
+        complete && _wsStatus == WsStatus.connected && !_isSubmitting;
     final count = _assignedNumbers.length;
+
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         // ── 초기화 버튼 (흰 정사각형) ──────────────────────────────────────
         GestureDetector(
-          onTap: _onReset,
+          onTap: _isSubmitting ? null : _onReset,
           child: Container(
             width: 58,
             height: 58,
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: Colors.white.withValues(alpha: _isSubmitting ? 0.6 : 1.0),
               borderRadius: BorderRadius.circular(16),
               boxShadow: [
                 BoxShadow(
@@ -467,10 +598,10 @@ class _SetupScreenState extends State<SetupScreen> {
                 ),
               ],
             ),
-            child: const Center(
+            child: Center(
               child: Icon(
                 Icons.restart_alt_rounded,
-                color: Color(0xFF333333),
+                color: Color(_isSubmitting ? 0xFF999999 : 0xFF333333),
                 size: 26,
               ),
             ),
@@ -480,29 +611,30 @@ class _SetupScreenState extends State<SetupScreen> {
         // ── 제출 버튼 ──────────────────────────────────────────────────────
         Expanded(
           child: GestureDetector(
-            onTap: complete ? _onSubmit : null,
+            onTap: canSubmit ? _onSubmit : null,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 250),
               height: 58,
               decoration: BoxDecoration(
-                gradient: complete
+                gradient: canSubmit
                     ? const LinearGradient(
                         colors: [Color(0xFF8AFF2A), Color(0xFF4CAF50)],
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                       )
                     : null,
-                color: complete ? null : Colors.white.withValues(alpha: 0.08),
+                color: canSubmit ? null : Colors.white.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: complete
+                  color: canSubmit
                       ? Colors.transparent
                       : Colors.white.withValues(alpha: 0.18),
                 ),
-                boxShadow: complete
+                boxShadow: canSubmit
                     ? [
                         BoxShadow(
-                          color: const Color(0xFF7CFC00).withValues(alpha: 0.42),
+                          color:
+                              const Color(0xFF7CFC00).withValues(alpha: 0.42),
                           blurRadius: 20,
                           spreadRadius: 2,
                           offset: const Offset(0, 4),
@@ -511,25 +643,39 @@ class _SetupScreenState extends State<SetupScreen> {
                     : null,
               ),
               child: Center(
-                child: Text(
-                  complete
-                      ? '제출'
-                      : '숫자를 모두 배치하세요  ($count / $_totalSlots)',
-                  style: TextStyle(
-                    color: complete
-                        ? Colors.white
-                        : Colors.white.withValues(alpha: 0.35),
-                    fontSize: complete ? 17 : 14,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.5,
-                  ),
-                ),
+                child: _isSubmitting
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2.5,
+                        ),
+                      )
+                    : Text(
+                        _submitLabel(complete, count),
+                        style: TextStyle(
+                          color: canSubmit
+                              ? Colors.white
+                              : Colors.white.withValues(alpha: 0.35),
+                          fontSize: canSubmit ? 17 : 14,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
               ),
             ),
           ),
         ),
       ],
     );
+  }
+
+  String _submitLabel(bool complete, int count) {
+    if (!complete) return '숫자를 모두 배치하세요  ($count / $_totalSlots)';
+    if (_wsStatus == WsStatus.connecting) return '서버 연결 중...';
+    if (_wsStatus == WsStatus.error) return '연결 실패 — 재시도';
+    return '제출';
   }
 }
 

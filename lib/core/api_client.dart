@@ -10,6 +10,11 @@ import 'package:dio/dio.dart';
 class ApiClient {
   static const String baseUrl = 'https://zula-unelidible-thea.ngrok-free.dev';
 
+  /// HTTP baseUrl을 WebSocket URL로 변환 (https→wss, http→ws)
+  static String get wsBaseUrl => baseUrl
+      .replaceFirst('https://', 'wss://')
+      .replaceFirst('http://', 'ws://');
+
   static final ApiClient _instance = ApiClient._internal();
   factory ApiClient() => _instance;
 
