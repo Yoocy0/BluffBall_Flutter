@@ -89,8 +89,14 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
       config: StompConfig(
         url: ApiClient.wsUrl,
         onConnect: _onStompConnect(userId),
-        stompConnectHeaders: {'Authorization': 'Bearer $token'},
-        webSocketConnectHeaders: {'Authorization': 'Bearer $token'},
+        stompConnectHeaders: {
+          'Authorization': 'Bearer $token',
+          'ngrok-skip-browser-warning': 'true',
+        },
+        webSocketConnectHeaders: {
+          'Authorization': 'Bearer $token',
+          'ngrok-skip-browser-warning': 'true',
+        },
         onWebSocketError: (dynamic error) =>
             // ignore: avoid_print
             print('[WS] 오류: $error'),

@@ -4,51 +4,58 @@ import '../models/game_mode.dart';
 import '../models/setup_number_request.dart';
 import '../services/game_websocket_service.dart';
 import '../services/token_storage.dart';
+import 'pitch_selection_screen.dart';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── Step enum ────────────────────────────────────────────────────────────────
 
-const _kPoolSize = 12;   // 주사위 숫자 풀: 1~12
-const _kOutCount = 5;    // 아웃 슬롯 개수
+enum _Step { out, doublePlay, triple, homerun }
 
-// ─── Category definition ──────────────────────────────────────────────────────
+extension _StepX on _Step {
+  String get label => switch (this) {
+        _Step.out => '아웃',
+        _Step.doublePlay => '병살',
+        _Step.triple => '3루타',
+        _Step.homerun => '홈런',
+      };
 
-enum _Category { homerun, triple, doublePlay, out }
+  String get emoji => switch (this) {
+        _Step.out => '⚾',
+        _Step.doublePlay => '💀',
+        _Step.triple => '⚡',
+        _Step.homerun => '🏆',
+      };
 
-extension _CategoryX on _Category {
-  String get label => const {
-        _Category.homerun: '홈런',
-        _Category.triple: '3루타',
-        _Category.doublePlay: '병살',
-        _Category.out: '아웃',
-      }[this]!;
+  Color get color => switch (this) {
+        _Step.out => const Color(0xFF9E9E9E),
+        _Step.doublePlay => const Color(0xFFBB66FF),
+        _Step.triple => const Color(0xFF448AFF),
+        _Step.homerun => const Color(0xFFFF5252),
+      };
 
-  String get emoji => const {
-        _Category.homerun: '🏆',
-        _Category.triple: '⚡',
-        _Category.doublePlay: '💀',
-        _Category.out: '⚾',
-      }[this]!;
+  int get quota => switch (this) {
+        _Step.out => 5,
+        _Step.doublePlay => 1,
+        _Step.triple => 1,
+        _Step.homerun => 1,
+      };
 
-  Color get color => const {
-        _Category.homerun: Color(0xFFFF5252),
-        _Category.triple: Color(0xFF448AFF),
-        _Category.doublePlay: Color(0xFFBB66FF),
-        _Category.out: Color(0xFF9E9E9E),
-      }[this]!;
+  bool get isDefense => this == _Step.out || this == _Step.doublePlay;
 
-  int get slotCount => const {
-        _Category.homerun: 1,
-        _Category.triple: 1,
-        _Category.doublePlay: 1,
-        _Category.out: _kOutCount,
-      }[this]!;
+  _Step? get next {
+    final all = _Step.values;
+    final idx = all.indexOf(this);
+    return idx < all.length - 1 ? all[idx + 1] : null;
+  }
 }
+
+const _kPoolSize = 12;
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 class SetupScreen extends StatefulWidget {
   final GameMode gameMode;
   final String? matchSessionId;
+
   const SetupScreen({
     super.key,
     this.gameMode = GameMode.single,
@@ -60,39 +67,15 @@ class SetupScreen extends StatefulWidget {
 }
 
 class _SetupScreenState extends State<SetupScreen> {
-  final Map<_Category, List<int?>> _slots = {
-    _Category.homerun: [null],
-    _Category.triple: [null],
-    _Category.doublePlay: [null],
-    _Category.out: List.filled(_kOutCount, null),
+  final Map<_Step, List<int>> _selected = {
+    for (final s in _Step.values) s: [],
   };
+  _Step _currentStep = _Step.out;
 
-  int? _selectedNumber;
-
-  // WebSocket 상태
   WsStatus _wsStatus = WsStatus.connecting;
   final _ws = GameWebSocketService.instance;
   final _tokenStorage = TokenStorage();
-
-  // 제출 중 로딩
   bool _isSubmitting = false;
-
-  Set<int> get _assignedNumbers {
-    final result = <int>{};
-    for (final list in _slots.values) {
-      for (final n in list) {
-        if (n != null) result.add(n);
-      }
-    }
-    return result;
-  }
-
-  int get _totalSlots =>
-      _slots.values.fold(0, (sum, list) => sum + list.length);
-
-  bool get _isComplete => _assignedNumbers.length == _totalSlots;
-
-  // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   @override
   void initState() {
@@ -124,51 +107,77 @@ class _SetupScreenState extends State<SetupScreen> {
     super.dispose();
   }
 
-  void _onPoolTap(int number) {
+  // ── Logic ─────────────────────────────────────────────────────────────────
+
+  /// 현재 스텝과 같은 팀(수비/공격)의 다른 스텝에서 이미 사용된 번호
+  Set<int> get _unavailableForCurrent {
+    final result = <int>{};
+    for (final step in _Step.values) {
+      if (step != _currentStep && step.isDefense == _currentStep.isDefense) {
+        result.addAll(_selected[step]!);
+      }
+    }
+    return result;
+  }
+
+  bool get _isAllComplete =>
+      _Step.values.every((s) => _selected[s]!.length == s.quota);
+
+  bool get _isCurrentComplete =>
+      _selected[_currentStep]!.length == _currentStep.quota;
+
+  void _onTap(int number) {
+    final list = _selected[_currentStep]!;
+    final unavailable = _unavailableForCurrent;
+    if (unavailable.contains(number)) return;
+
     setState(() {
-      _selectedNumber = (_selectedNumber == number) ? null : number;
+      if (list.contains(number)) {
+        list.remove(number);
+      } else if (list.length < _currentStep.quota) {
+        list.add(number);
+        // 단일 슬롯 스텝은 선택 즉시 다음으로 이동
+        if (_currentStep.quota == 1) {
+          final next = _currentStep.next;
+          if (next != null) {
+            Future.delayed(const Duration(milliseconds: 300), () {
+              if (mounted) setState(() => _currentStep = next);
+            });
+          }
+        }
+      }
     });
   }
 
-  void _onSlotTap(_Category cat, int slotIndex) {
-    setState(() {
-      final current = _slots[cat]![slotIndex];
-      if (current != null) {
-        // Unassign → return to pool and auto-select
-        _slots[cat]![slotIndex] = null;
-        _selectedNumber = current;
-      } else if (_selectedNumber != null) {
-        // Place selected number into this slot
-        _slots[cat]![slotIndex] = _selectedNumber;
-        _selectedNumber = null;
-      }
-    });
+  void _onNext() {
+    if (!_isCurrentComplete) return;
+    final next = _currentStep.next;
+    if (next != null) setState(() => _currentStep = next);
   }
 
   void _onReset() {
+    if (_isSubmitting) return;
     setState(() {
-      for (final cat in _slots.keys) {
-        _slots[cat] = List.filled(cat.slotCount, null);
+      for (final step in _Step.values) {
+        _selected[step] = [];
       }
-      _selectedNumber = null;
+      _currentStep = _Step.out;
     });
   }
 
   Future<void> _onSubmit() async {
-    if (!_isComplete || _isSubmitting) return;
-
+    if (!_isAllComplete || _isSubmitting) return;
     if (!_ws.isConnected) {
-      _showSnackBar('서버에 연결되어 있지 않습니다. 잠시 후 다시 시도해주세요.', isError: true);
+      _showSnackBar('서버에 연결되어 있지 않습니다.', isError: true);
       return;
     }
-
     setState(() => _isSubmitting = true);
 
     final request = SetupNumberRequest(
-      outNumList: _slots[_Category.out]!.whereType<int>().toList(),
-      dpNumList: _slots[_Category.doublePlay]!.whereType<int>().toList(),
-      tripleNumList: _slots[_Category.triple]!.whereType<int>().toList(),
-      hrNumList: _slots[_Category.homerun]!.whereType<int>().toList(),
+      outNumList: _selected[_Step.out]!,
+      dpNumList: _selected[_Step.doublePlay]!,
+      tripleNumList: _selected[_Step.triple]!,
+      hrNumList: _selected[_Step.homerun]!,
     );
 
     final sent = _ws.sendSetupNumbers(
@@ -180,10 +189,17 @@ class _SetupScreenState extends State<SetupScreen> {
     setState(() => _isSubmitting = false);
 
     if (sent) {
-      // TODO: 서버 응답(구독 토픽)을 수신한 뒤 게임플레이 화면으로 전환
-      _showSnackBar('셋업 숫자가 제출되었습니다!');
+      Navigator.of(context).pushReplacement(PageRouteBuilder(
+        pageBuilder: (_, __, ___) => PitchSelectionScreen(
+          gameMode: widget.gameMode,
+          matchSessionId: widget.matchSessionId ?? '',
+        ),
+        transitionsBuilder: (_, anim, __, child) =>
+            FadeTransition(opacity: anim, child: child),
+        transitionDuration: const Duration(milliseconds: 400),
+      ));
     } else {
-      _showSnackBar('전송에 실패했습니다. 다시 시도해주세요.', isError: true);
+      _showSnackBar('전송에 실패했습니다.', isError: true);
     }
   }
 
@@ -196,7 +212,8 @@ class _SetupScreenState extends State<SetupScreen> {
         backgroundColor:
             isError ? const Color(0xFFD32F2F) : const Color(0xFF388E3C),
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         margin: const EdgeInsets.fromLTRB(16, 0, 16, 20),
         duration: Duration(seconds: isError ? 4 : 2),
       ),
@@ -215,25 +232,12 @@ class _SetupScreenState extends State<SetupScreen> {
           SafeArea(
             child: Column(children: [
               _buildHeader(),
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const SizedBox(height: 14),
-                      ..._Category.values.map(_buildCategoryRow),
-                      const SizedBox(height: 20),
-                      _buildDivider(),
-                      const SizedBox(height: 18),
-                      _buildPoolSection(),
-                      const SizedBox(height: 28),
-                      _buildActionButtons(),
-                      const SizedBox(height: 28),
-                    ],
-                  ),
-                ),
-              ),
+              _buildSummaryBar(),
+              _buildStepIndicator(),
+              _buildCurrentStepInfo(),
+              Expanded(child: _buildNumberGrid()),
+              _buildButtons(),
+              const SizedBox(height: 12),
             ]),
           ),
         ]),
@@ -261,10 +265,10 @@ class _SetupScreenState extends State<SetupScreen> {
                 end: Alignment.bottomCenter,
                 colors: [
                   Colors.black.withValues(alpha: 0.08),
-                  Colors.black.withValues(alpha: 0.50),
-                  Colors.black.withValues(alpha: 0.78),
+                  Colors.black.withValues(alpha: 0.55),
+                  Colors.black.withValues(alpha: 0.82),
                 ],
-                stops: const [0.0, 0.38, 1.0],
+                stops: const [0.0, 0.35, 1.0],
               ),
             ),
           ),
@@ -279,69 +283,22 @@ class _SetupScreenState extends State<SetupScreen> {
   // ── Header ────────────────────────────────────────────────────────────────
 
   Widget _buildHeader() {
-    final count = _assignedNumbers.length;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text(
-              '셋업 숫자 선택',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 22,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.8,
-                shadows: [Shadow(blurRadius: 10, color: Colors.black87)],
-              ),
+          const Text(
+            '셋업 숫자 선택',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.5,
+              shadows: [Shadow(blurRadius: 10, color: Colors.black87)],
             ),
-            const SizedBox(height: 4),
-            Text(
-              '숫자를 눌러 카테고리 슬롯에 배치하세요',
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.60),
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                shadows: const [Shadow(blurRadius: 6, color: Colors.black87)],
-              ),
-            ),
-          ]),
-          const Spacer(),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              // 슬롯 카운터
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: _isComplete
-                      ? const Color(0xFF7CFC00).withValues(alpha: 0.22)
-                      : Colors.white.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: _isComplete
-                        ? const Color(0xFF7CFC00).withValues(alpha: 0.55)
-                        : Colors.white.withValues(alpha: 0.22),
-                  ),
-                ),
-                child: Text(
-                  '$count / $_totalSlots',
-                  style: TextStyle(
-                    color:
-                        _isComplete ? const Color(0xFF7CFC00) : Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 6),
-              // WebSocket 연결 상태 뱃지
-              _buildWsBadge(),
-            ],
           ),
+          const Spacer(),
+          _buildWsBadge(),
         ],
       ),
     );
@@ -349,379 +306,475 @@ class _SetupScreenState extends State<SetupScreen> {
 
   Widget _buildWsBadge() {
     final (label, color, icon) = switch (_wsStatus) {
-      WsStatus.connecting => ('연결 중...', const Color(0xFFFFD700), Icons.sync_rounded),
-      WsStatus.connected => ('연결됨', const Color(0xFF7CFC00), Icons.wifi_rounded),
-      WsStatus.error => ('연결 실패', const Color(0xFFFF5252), Icons.wifi_off_rounded),
-      WsStatus.disconnected => ('연결 끊김', const Color(0xFF9E9E9E), Icons.wifi_off_rounded),
+      WsStatus.connecting => (
+          '연결 중',
+          const Color(0xFFFFD700),
+          Icons.sync_rounded
+        ),
+      WsStatus.connected => (
+          '연결됨',
+          const Color(0xFF7CFC00),
+          Icons.wifi_rounded
+        ),
+      WsStatus.error => (
+          '연결 실패',
+          const Color(0xFFFF5252),
+          Icons.wifi_off_rounded
+        ),
+      WsStatus.disconnected => (
+          '연결 끊김',
+          const Color(0xFF9E9E9E),
+          Icons.wifi_off_rounded
+        ),
     };
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, color: color, size: 11),
         const SizedBox(width: 3),
-        Text(
-          label,
-          style: TextStyle(
-            color: color,
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+        Text(label,
+            style: TextStyle(
+                color: color, fontSize: 11, fontWeight: FontWeight.w600)),
       ],
     );
   }
 
-  // ── Category rows ─────────────────────────────────────────────────────────
+  // ── Summary bar ───────────────────────────────────────────────────────────
 
-  Widget _buildCategoryRow(_Category cat) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.32),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: cat.color.withValues(alpha: 0.22)),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            // Category badge
-            Container(
-              width: 76,
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              decoration: BoxDecoration(
-                color: cat.color.withValues(alpha: 0.16),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: cat.color.withValues(alpha: 0.38)),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
+  Widget _buildSummaryBar() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.42),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+      ),
+      child: Row(
+        children: [
+          _buildSummaryTeam('수비', [_Step.out, _Step.doublePlay]),
+          Container(
+            width: 1,
+            height: 32,
+            margin: const EdgeInsets.symmetric(horizontal: 12),
+            color: Colors.white.withValues(alpha: 0.15),
+          ),
+          _buildSummaryTeam('공격', [_Step.triple, _Step.homerun]),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSummaryTeam(String teamLabel, List<_Step> steps) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            teamLabel,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.40),
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.8,
+            ),
+          ),
+          const SizedBox(height: 4),
+          ...steps.map((step) {
+            final nums = _selected[step]!;
+            final isDone = nums.length == step.quota;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 1),
+              child: Row(
                 children: [
-                  Text(cat.emoji, style: const TextStyle(fontSize: 16)),
-                  const SizedBox(height: 2),
                   Text(
-                    cat.label,
+                    '${step.label} ',
                     style: TextStyle(
-                      color: cat.color,
-                      fontSize: 12,
+                      color: step.color.withValues(alpha: isDone ? 1.0 : 0.6),
+                      fontSize: 11,
                       fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      nums.isEmpty ? '-' : nums.join(' · '),
+                      style: TextStyle(
+                        color: nums.isEmpty
+                            ? Colors.white.withValues(alpha: 0.22)
+                            : Colors.white.withValues(alpha: 0.88),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ],
               ),
-            ),
-            const SizedBox(width: 12),
-            // Slots
-            Expanded(
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: List.generate(
-                  cat.slotCount,
-                  (i) => _buildSlot(cat, i),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  // ── Step indicator ────────────────────────────────────────────────────────
+
+  Widget _buildStepIndicator() {
+    final steps = _Step.values;
+    final currentIdx = steps.indexOf(_currentStep);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+      child: Row(
+        children: [
+          for (int i = 0; i < steps.length; i++) ...[
+            if (i > 0)
+              Expanded(
+                child: Container(
+                  height: 2,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(1),
+                    color: i <= currentIdx
+                        ? steps[i - 1].color.withValues(alpha: 0.55)
+                        : Colors.white.withValues(alpha: 0.12),
+                  ),
                 ),
               ),
-            ),
+            _buildStepDot(steps[i], i <= currentIdx),
           ],
-        ),
+        ],
       ),
     );
   }
 
-  Widget _buildSlot(_Category cat, int slotIndex) {
-    final number = _slots[cat]![slotIndex];
-    final isEmpty = number == null;
-    final canReceive = isEmpty && _selectedNumber != null;
+  Widget _buildStepDot(_Step step, bool reached) {
+    final isDone = _selected[step]!.length == step.quota;
+    final isCurrent = step == _currentStep;
 
-    return GestureDetector(
-      onTap: () => _onSlotTap(cat, slotIndex),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        width: 52,
-        height: 52,
-        decoration: BoxDecoration(
-          color: isEmpty
-              ? (canReceive
-                  ? cat.color.withValues(alpha: 0.14)
-                  : Colors.white.withValues(alpha: 0.06))
-              : Colors.white.withValues(alpha: 0.95),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: isEmpty
-                ? (canReceive
-                    ? cat.color.withValues(alpha: 0.80)
-                    : cat.color.withValues(alpha: 0.28))
-                : cat.color,
-            width: canReceive ? 2.0 : 1.5,
-          ),
-          boxShadow: isEmpty
-              ? null
-              : [
-                  BoxShadow(
-                    color: cat.color.withValues(alpha: 0.30),
-                    blurRadius: 8,
-                    spreadRadius: 1,
-                  ),
-                ],
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
+      width: 30,
+      height: 30,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: isDone
+            ? step.color
+            : (isCurrent
+                ? step.color.withValues(alpha: 0.22)
+                : Colors.white.withValues(alpha: 0.07)),
+        border: Border.all(
+          color: reached
+              ? step.color.withValues(alpha: 0.80)
+              : Colors.white.withValues(alpha: 0.15),
+          width: 1.5,
         ),
-        child: isEmpty
-            ? (canReceive
-                ? Center(
-                    child: Icon(Icons.add_rounded,
-                        color: cat.color.withValues(alpha: 0.65), size: 24))
-                : null)
-            : _DiceFace(
-                number: number,
-                numberColor: cat.color,
-                dotColor: cat.color.withValues(alpha: 0.22),
-                size: 52,
-              ),
+      ),
+      child: Center(
+        child: isDone
+            ? const Icon(Icons.check_rounded, color: Colors.white, size: 14)
+            : Text(step.emoji, style: const TextStyle(fontSize: 13)),
       ),
     );
   }
 
-  // ── Pool section ──────────────────────────────────────────────────────────
+  // ── Current step info ─────────────────────────────────────────────────────
 
-  Widget _buildDivider() {
-    return Row(children: [
-      Expanded(
-          child:
-              Divider(color: Colors.white.withValues(alpha: 0.15), thickness: 1)),
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        child: Text(
-          '주사위 숫자',
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.40),
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 1.0,
-          ),
-        ),
-      ),
-      Expanded(
-          child:
-              Divider(color: Colors.white.withValues(alpha: 0.15), thickness: 1)),
-    ]);
-  }
+  Widget _buildCurrentStepInfo() {
+    final step = _currentStep;
+    final count = _selected[step]!.length;
+    final quota = step.quota;
 
-  Widget _buildPoolSection() {
-    final assigned = _assignedNumbers;
-    return Wrap(
-      spacing: 10,
-      runSpacing: 10,
-      alignment: WrapAlignment.center,
-      children: List.generate(_kPoolSize, (i) {
-        final number = i + 1;
-        final isAssigned = assigned.contains(number);
-        final isSelected = _selectedNumber == number;
-
-        return GestureDetector(
-          onTap: isAssigned ? null : () => _onPoolTap(number),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            width: 60,
-            height: 60,
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Row(
+        children: [
+          // Category badge
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             decoration: BoxDecoration(
-              color: isAssigned
-                  ? Colors.white.withValues(alpha: 0.08)
-                  : Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: isSelected
-                    ? const Color(0xFFFFD700)
-                    : (isAssigned
-                        ? Colors.white.withValues(alpha: 0.12)
-                        : Colors.white.withValues(alpha: 0.0)),
-                width: isSelected ? 2.5 : 1.5,
-              ),
-              boxShadow: isSelected
-                  ? [
-                      BoxShadow(
-                        color: const Color(0xFFFFD700).withValues(alpha: 0.60),
-                        blurRadius: 16,
-                        spreadRadius: 2,
-                      ),
-                    ]
-                  : (isAssigned
-                      ? null
-                      : [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.30),
-                            blurRadius: 6,
-                            offset: const Offset(0, 3),
-                          ),
-                        ]),
+              color: step.color.withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: step.color.withValues(alpha: 0.45)),
             ),
-            child: isAssigned
-                ? Center(
-                    child: Icon(Icons.check_rounded,
-                        color: Colors.white.withValues(alpha: 0.22), size: 24))
-                : _DiceFace(
-                    number: number,
-                    numberColor: const Color(0xFF1C1C1C),
-                    dotColor: const Color(0xFFCCCCCC),
-                    size: 60,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(step.emoji, style: const TextStyle(fontSize: 15)),
+                const SizedBox(width: 6),
+                Text(
+                  step.label,
+                  style: TextStyle(
+                    color: step.color,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
                   ),
-          ),
-        );
-      }),
-    );
-  }
-
-  // ── Action buttons (제출 + 초기화) ───────────────────────────────────────
-
-  Widget _buildActionButtons() {
-    final complete = _isComplete;
-    final canSubmit =
-        complete && _wsStatus == WsStatus.connected && !_isSubmitting;
-    final count = _assignedNumbers.length;
-
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        // ── 초기화 버튼 (흰 정사각형) ──────────────────────────────────────
-        GestureDetector(
-          onTap: _isSubmitting ? null : _onReset,
-          child: Container(
-            width: 58,
-            height: 58,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: _isSubmitting ? 0.6 : 1.0),
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.22),
-                  blurRadius: 8,
-                  offset: const Offset(0, 3),
                 ),
               ],
             ),
-            child: Center(
-              child: Icon(
-                Icons.restart_alt_rounded,
-                color: Color(_isSubmitting ? 0xFF999999 : 0xFF333333),
-                size: 26,
-              ),
-            ),
           ),
-        ),
-        const SizedBox(width: 12),
-        // ── 제출 버튼 ──────────────────────────────────────────────────────
-        Expanded(
-          child: GestureDetector(
-            onTap: canSubmit ? _onSubmit : null,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 250),
-              height: 58,
-              decoration: BoxDecoration(
-                gradient: canSubmit
-                    ? const LinearGradient(
-                        colors: [Color(0xFF8AFF2A), Color(0xFF4CAF50)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      )
-                    : null,
-                color: canSubmit ? null : Colors.white.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: canSubmit
-                      ? Colors.transparent
-                      : Colors.white.withValues(alpha: 0.18),
+          const SizedBox(width: 12),
+          // Slot dots
+          Row(
+            children: List.generate(quota, (i) {
+              final filled = i < count;
+              return Container(
+                width: 16,
+                height: 16,
+                margin: const EdgeInsets.only(right: 5),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: filled
+                      ? step.color
+                      : Colors.white.withValues(alpha: 0.10),
+                  border: Border.all(
+                    color: filled
+                        ? step.color
+                        : Colors.white.withValues(alpha: 0.28),
+                    width: 1.5,
+                  ),
                 ),
-                boxShadow: canSubmit
-                    ? [
-                        BoxShadow(
-                          color:
-                              const Color(0xFF7CFC00).withValues(alpha: 0.42),
-                          blurRadius: 20,
-                          spreadRadius: 2,
-                          offset: const Offset(0, 4),
-                        ),
-                      ]
-                    : null,
-              ),
-              child: Center(
-                child: _isSubmitting
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                          color: Colors.white,
-                          strokeWidth: 2.5,
-                        ),
-                      )
-                    : Text(
-                        _submitLabel(complete, count),
-                        style: TextStyle(
-                          color: canSubmit
-                              ? Colors.white
-                              : Colors.white.withValues(alpha: 0.35),
-                          fontSize: canSubmit ? 17 : 14,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-              ),
-            ),
+              );
+            }),
           ),
-        ),
-      ],
+          const Spacer(),
+          AnimatedDefaultTextStyle(
+            duration: const Duration(milliseconds: 200),
+            style: TextStyle(
+              color: count == quota
+                  ? const Color(0xFF7CFC00)
+                  : Colors.white.withValues(alpha: 0.50),
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+            child: Text('$count / $quota'),
+          ),
+        ],
+      ),
     );
   }
 
-  String _submitLabel(bool complete, int count) {
-    if (!complete) return '숫자를 모두 배치하세요  ($count / $_totalSlots)';
-    if (_wsStatus == WsStatus.connecting) return '서버 연결 중...';
-    if (_wsStatus == WsStatus.error) return '연결 실패 — 재시도';
-    return '제출';
-  }
-}
+  // ── Number grid ───────────────────────────────────────────────────────────
 
-// ─── Dice face widget ─────────────────────────────────────────────────────────
+  Widget _buildNumberGrid() {
+    final step = _currentStep;
+    final selectedNums = _selected[step]!;
+    final unavailable = _unavailableForCurrent;
 
-class _DiceFace extends StatelessWidget {
-  final int number;
-  final Color numberColor;
-  final Color dotColor;
-  final double size;
-
-  const _DiceFace({
-    required this.number,
-    required this.numberColor,
-    required this.dotColor,
-    required this.size,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final dotSize = (size * 0.08).clamp(4.0, 6.5);
-    final pad = size * 0.13;
-    return Stack(children: [
-      Positioned(top: pad, left: pad, child: _dot(dotSize)),
-      Positioned(top: pad, right: pad, child: _dot(dotSize)),
-      Positioned(bottom: pad, left: pad, child: _dot(dotSize)),
-      Positioned(bottom: pad, right: pad, child: _dot(dotSize)),
-      Center(
-        child: Text(
-          '$number',
-          style: TextStyle(
-            color: numberColor,
-            fontSize: size * 0.38,
-            fontWeight: FontWeight.w900,
-            height: 1,
-          ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      child: GridView.builder(
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 4,
+          crossAxisSpacing: 8,
+          mainAxisSpacing: 8,
         ),
+        itemCount: _kPoolSize,
+        itemBuilder: (_, i) {
+          final number = i + 1;
+          final isSelected = selectedNums.contains(number);
+          final isUnavailable = unavailable.contains(number);
+          final isFull =
+              selectedNums.length >= step.quota && !isSelected;
+          final tappable = !isUnavailable && !isFull;
+
+          return GestureDetector(
+            onTap: tappable ? () => _onTap(number) : null,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 140),
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? step.color
+                    : (isUnavailable || isFull
+                        ? Colors.white.withValues(alpha: 0.06)
+                        : Colors.white.withValues(alpha: 0.93)),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isSelected
+                      ? step.color
+                      : (isUnavailable || isFull
+                          ? Colors.white.withValues(alpha: 0.10)
+                          : Colors.transparent),
+                  width: 2,
+                ),
+                boxShadow: isSelected
+                    ? [
+                        BoxShadow(
+                          color: step.color.withValues(alpha: 0.45),
+                          blurRadius: 12,
+                          spreadRadius: 1,
+                        )
+                      ]
+                    : (!isUnavailable && !isFull
+                        ? [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.22),
+                              blurRadius: 5,
+                              offset: const Offset(0, 2),
+                            )
+                          ]
+                        : null),
+              ),
+              child: Center(
+                child: Text(
+                  '$number',
+                  style: TextStyle(
+                    color: isSelected
+                        ? Colors.white
+                        : (isUnavailable || isFull
+                            ? Colors.white.withValues(alpha: 0.18)
+                            : const Color(0xFF1C1C1C)),
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
       ),
-    ]);
+    );
   }
 
-  Widget _dot(double s) => Container(
-        width: s,
-        height: s,
-        decoration: BoxDecoration(shape: BoxShape.circle, color: dotColor),
-      );
+  // ── Buttons ───────────────────────────────────────────────────────────────
+
+  Widget _buildButtons() {
+    final isLast = _currentStep == _Step.values.last;
+    final currentComplete = _isCurrentComplete;
+    final allComplete = _isAllComplete;
+    final canAct = isLast
+        ? allComplete && _wsStatus == WsStatus.connected && !_isSubmitting
+        : currentComplete;
+
+    String buttonLabel;
+    if (_isSubmitting) {
+      buttonLabel = '';
+    } else if (isLast) {
+      if (allComplete) {
+        buttonLabel = _wsStatus == WsStatus.connecting ? '연결 중...' : '제출';
+      } else {
+        buttonLabel =
+            '${_currentStep.quota - _selected[_currentStep]!.length}개 더 선택';
+      }
+    } else {
+      if (currentComplete) {
+        buttonLabel = '다음  ${_currentStep.next!.label} →';
+      } else {
+        buttonLabel =
+            '${_currentStep.quota - _selected[_currentStep]!.length}개 더 선택';
+      }
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      child: Row(
+        children: [
+          // Reset
+          GestureDetector(
+            onTap: _isSubmitting ? null : _onReset,
+            child: Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: Colors.white
+                    .withValues(alpha: _isSubmitting ? 0.5 : 1.0),
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.22),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  )
+                ],
+              ),
+              child: Center(
+                child: Icon(
+                  Icons.restart_alt_rounded,
+                  color:
+                      Color(_isSubmitting ? 0xFF999999 : 0xFF333333),
+                  size: 24,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          // Next / Submit
+          Expanded(
+            child: GestureDetector(
+              onTap: canAct
+                  ? (isLast ? _onSubmit : _onNext)
+                  : null,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 220),
+                height: 52,
+                decoration: BoxDecoration(
+                  gradient: canAct
+                      ? LinearGradient(
+                          colors: isLast
+                              ? [
+                                  const Color(0xFF8AFF2A),
+                                  const Color(0xFF4CAF50)
+                                ]
+                              : [
+                                  _currentStep.color,
+                                  _currentStep.color
+                                      .withValues(alpha: 0.72)
+                                ],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        )
+                      : null,
+                  color: canAct
+                      ? null
+                      : Colors.white.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: canAct
+                        ? Colors.transparent
+                        : Colors.white.withValues(alpha: 0.14),
+                  ),
+                  boxShadow: canAct
+                      ? [
+                          BoxShadow(
+                            color: (isLast
+                                    ? const Color(0xFF7CFC00)
+                                    : _currentStep.color)
+                                .withValues(alpha: 0.42),
+                            blurRadius: 18,
+                            spreadRadius: 1,
+                            offset: const Offset(0, 3),
+                          )
+                        ]
+                      : null,
+                ),
+                child: Center(
+                  child: _isSubmitting
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                              color: Colors.white, strokeWidth: 2.5),
+                        )
+                      : Text(
+                          buttonLabel,
+                          style: TextStyle(
+                            color: canAct
+                                ? Colors.white
+                                : Colors.white.withValues(alpha: 0.32),
+                            fontSize: canAct ? 15 : 13,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 // ─── Mode background painter ──────────────────────────────────────────────────
@@ -760,7 +813,6 @@ class _ModeBgPainter extends CustomPainter {
           colors: colors,
         ).createShader(rect),
     );
-    // Subtle diamond tile overlay
     final tilePaint = Paint()
       ..color = Colors.white.withValues(alpha: 0.04)
       ..style = PaintingStyle.stroke

@@ -6,7 +6,7 @@ import '../models/setup_number_request.dart';
 ///
 /// 백엔드 WebSocketMessageBrokerConfigurer.registerStompEndpoints()에서
 /// 등록한 경로와 일치해야 함 (예: registry.addEndpoint("/ws"))
-const _kStompPath = '/ws';
+const _kStompPath = '/ws/websocket';
 
 enum WsStatus { disconnected, connecting, connected, error }
 
@@ -41,8 +41,14 @@ class GameWebSocketService {
     _client = StompClient(
       config: StompConfig(
         url: url,
-        stompConnectHeaders: {'Authorization': 'Bearer $accessToken'},
-        webSocketConnectHeaders: {'Authorization': 'Bearer $accessToken'},
+        stompConnectHeaders: {
+          'Authorization': 'Bearer $accessToken',
+          'ngrok-skip-browser-warning': 'true',
+        },
+        webSocketConnectHeaders: {
+          'Authorization': 'Bearer $accessToken',
+          'ngrok-skip-browser-warning': 'true',
+        },
         connectionTimeout: const Duration(seconds: 10),
         // 게임 중에는 자동 재연결 하지 않음 (세션 만료 방지)
         reconnectDelay: Duration.zero,
