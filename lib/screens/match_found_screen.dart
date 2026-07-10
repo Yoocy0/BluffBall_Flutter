@@ -6,7 +6,9 @@ import 'package:flutter/services.dart';
 import 'setup_screen.dart';
 
 class MatchFoundScreen extends StatefulWidget {
-  const MatchFoundScreen({super.key});
+  final String? matchSessionId;
+
+  const MatchFoundScreen({super.key, this.matchSessionId});
 
   @override
   State<MatchFoundScreen> createState() => _MatchFoundScreenState();
@@ -100,8 +102,9 @@ class _MatchFoundScreenState extends State<MatchFoundScreen>
   void _navigateToSetup() {
     if (!mounted) return;
     Navigator.of(context).pushReplacement(PageRouteBuilder(
-      pageBuilder: (_, __, ___) => const SetupScreen(),
-      transitionsBuilder: (_, anim, __, child) => FadeTransition(
+      pageBuilder: (_, _, _) =>
+          SetupScreen(matchSessionId: widget.matchSessionId),
+      transitionsBuilder: (_, anim, _, child) => FadeTransition(
         opacity: anim,
         child: child,
       ),
@@ -150,7 +153,7 @@ class _MatchFoundScreenState extends State<MatchFoundScreen>
   Widget _buildCheckIcon() {
     return AnimatedBuilder(
       animation: Listenable.merge([_checkCtrl, _glowCtrl]),
-      builder: (_, __) => Opacity(
+      builder: (_, _) => Opacity(
         opacity: _checkOpacity.value,
         child: Transform.scale(
           scale: _checkScale.value,
@@ -176,7 +179,7 @@ class _MatchFoundScreenState extends State<MatchFoundScreen>
               // 회전 링 (확인 중 표시)
               AnimatedBuilder(
                 animation: _ringCtrl,
-                builder: (_, __) => Transform.rotate(
+                builder: (_, _) => Transform.rotate(
                   angle: _ringCtrl.value * 2 * math.pi,
                   child: CustomPaint(
                     size: const Size(120, 120),

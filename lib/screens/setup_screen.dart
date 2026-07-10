@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 class SetupScreen extends StatelessWidget {
-  const SetupScreen({super.key});
+  final String? matchSessionId;
+
+  const SetupScreen({super.key, this.matchSessionId});
 
   @override
   Widget build(BuildContext context) {
