@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'match_found_screen.dart';
+import '../models/game_mode.dart';
 
 class MatchmakingScreen extends StatefulWidget {
-  const MatchmakingScreen({super.key});
+  final GameMode gameMode;
+  const MatchmakingScreen({super.key, required this.gameMode});
 
   @override
   State<MatchmakingScreen> createState() => _MatchmakingScreenState();
@@ -37,7 +39,7 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
     _matchTimer = Timer(const Duration(seconds: 5), () {
       if (!mounted) return;
       Navigator.of(context).pushReplacement(PageRouteBuilder(
-        pageBuilder: (_, __, ___) => const MatchFoundScreen(),
+        pageBuilder: (_, __, ___) => MatchFoundScreen(gameMode: widget.gameMode),
         transitionsBuilder: (_, anim, __, child) => FadeTransition(
           opacity: anim, child: child,
         ),

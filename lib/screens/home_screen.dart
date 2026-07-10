@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import '../services/auth_service.dart';
 import 'login_screen.dart';
 import 'matchmaking_screen.dart';
+import '../models/game_mode.dart';
 
 // ─── 색상 팔레트 ────────────────────────────────────────────────────────────
 const _kDarkBase = Color(0xFF161D0B);
@@ -225,7 +226,7 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(child: _BattleButton(
               label: '싱글 모드', icon: Icons.person_rounded,
               onTap: () => Navigator.of(context).push(PageRouteBuilder(
-                pageBuilder: (_, __, ___) => const MatchmakingScreen(),
+                pageBuilder: (_, __, ___) => const MatchmakingScreen(gameMode: GameMode.single),
                 transitionsBuilder: (_, anim, __, child) => FadeTransition(
                   opacity: anim, child: child,
                 ),

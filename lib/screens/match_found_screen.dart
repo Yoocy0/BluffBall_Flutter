@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'setup_screen.dart';
+import '../models/game_mode.dart';
 
 class MatchFoundScreen extends StatefulWidget {
-  const MatchFoundScreen({super.key});
+  final GameMode gameMode;
+  const MatchFoundScreen({super.key, required this.gameMode});
 
   @override
   State<MatchFoundScreen> createState() => _MatchFoundScreenState();
@@ -100,7 +102,7 @@ class _MatchFoundScreenState extends State<MatchFoundScreen>
   void _navigateToSetup() {
     if (!mounted) return;
     Navigator.of(context).pushReplacement(PageRouteBuilder(
-      pageBuilder: (_, __, ___) => const SetupScreen(),
+      pageBuilder: (_, __, ___) => SetupScreen(gameMode: widget.gameMode),
       transitionsBuilder: (_, anim, __, child) => FadeTransition(
         opacity: anim,
         child: child,
