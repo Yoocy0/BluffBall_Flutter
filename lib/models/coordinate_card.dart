@@ -13,9 +13,9 @@ class CoordinateCard {
   });
 
   factory CoordinateCard.fromJson(Map<String, dynamic> json) => CoordinateCard(
-        id: (json['id'] as num).toInt(),
-        coordinateNumber: (json['coordinateNumber'] as num).toInt(),
-        name: json['name'] as String,
-        isStrike: json['isStrike'] as bool,
+        id: (json['id'] as num?)?.toInt() ?? 0,
+        coordinateNumber: (json['coordinateNumber'] as num?)?.toInt() ?? 0,
+        name: (json['name'] as String?) ?? '',
+        isStrike: (json['isStrike'] as bool?) ?? false,
       );
 }

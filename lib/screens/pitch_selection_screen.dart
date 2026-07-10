@@ -9,6 +9,7 @@ import '../services/game_websocket_service.dart';
 import '../services/match_service.dart';
 import '../services/token_storage.dart';
 import '../widgets/mode_background.dart';
+import 'batter_game_screen.dart';
 import 'pitcher_game_screen.dart';
 
 // ─── Phase state machine ──────────────────────────────────────────────────────
@@ -89,8 +90,8 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
 
   @override
   void dispose() {
-    _ws.unsubscribeGameTopic();
-    _ws.disconnect();
+    // WebSocket 연결은 유지 — BatterGameScreen/PitcherGameScreen이 계속 사용.
+    // 게임 종료 시 GameOverScreen 또는 홈으로 이동할 때 disconnect 호출.
     _dealCtrl.dispose();
     _collectCtrl.dispose();
     _shuffleCtrl.dispose();
@@ -172,8 +173,17 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
               matchSessionId: widget.matchSessionId,
               setupNumbers: widget.setupNumbers,
               handCards: event.cardInfos,
+              currentUserId: _currentUserId!,
+              initialPitcherUserId: event.pitcherUserId,
             )
-          : _BatterPlaceholder(gameMode: widget.gameMode), // TODO: BatterGameScreen
+          : BatterGameScreen(
+              gameMode: widget.gameMode,
+              matchSessionId: widget.matchSessionId,
+              setupNumbers: widget.setupNumbers,
+              handCards: event.cardInfos,
+              currentUserId: _currentUserId!,
+              initialPitcherUserId: event.pitcherUserId,
+            ),
       transitionsBuilder: (_, anim, _c, child) =>
           FadeTransition(opacity: anim, child: child),
       transitionDuration: const Duration(milliseconds: 400),
@@ -1301,39 +1311,6 @@ class _SmallCardWidget extends StatelessWidget {
             ),
           ),
       ],
-    );
-  }
-}
-
-// ─── Batter placeholder (TODO: BatterGameScreen 구현 후 교체) ─────────────────
-
-class _BatterPlaceholder extends StatelessWidget {
-  final GameMode gameMode;
-  const _BatterPlaceholder({required this.gameMode});
-
-  @override
-  Widget build(BuildContext context) {
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle.light,
-      child: Scaffold(
-        body: Stack(children: [
-          ModeBackground(mode: gameMode),
-          const SafeArea(
-            child: Center(
-              child: Text(
-                '타자 화면\n(준비 중)',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
-                  shadows: [Shadow(blurRadius: 10, color: Colors.black87)],
-                ),
-              ),
-            ),
-          ),
-        ]),
-      ),
     );
   }
 }
