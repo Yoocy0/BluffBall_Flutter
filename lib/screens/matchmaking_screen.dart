@@ -1,7 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:stomp_dart_client/stomp_dart_client.dart';
 
+import '../core/api_client.dart';
+import '../services/match_service.dart';
+import '../services/token_storage.dart';
 import 'match_found_screen.dart';
 
 class MatchmakingScreen extends StatefulWidget {
@@ -12,10 +17,13 @@ class MatchmakingScreen extends StatefulWidget {
 }
 
 class _MatchmakingScreenState extends State<MatchmakingScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   int _seconds = 0;
   Timer? _timer;
-  Timer? _matchTimer;
+
+  final _matchService = MatchService();
+  StompClient? _stompClient;
+  bool _isCancelling = false;
 
   late final AnimationController _floatCtrl;
   late final Animation<double> _floatY;
@@ -28,21 +36,10 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
 
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() => _seconds++);
-    });
-
-    // 5초 후 매칭 완료 화면으로 전환 (임시 — API 연결 전)
-    _matchTimer = Timer(const Duration(seconds: 5), () {
-      if (!mounted) return;
-      Navigator.of(context).pushReplacement(PageRouteBuilder(
-        pageBuilder: (_, __, ___) => const MatchFoundScreen(),
-        transitionsBuilder: (_, anim, __, child) => FadeTransition(
-          opacity: anim, child: child,
-        ),
-        transitionDuration: const Duration(milliseconds: 400),
-      ));
     });
 
     // 캐릭터 플로팅
@@ -51,9 +48,9 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
       duration: const Duration(milliseconds: 2200),
     )..repeat(reverse: true);
     _floatY = Tween<double>(begin: -8, end: 8).animate(
-      CurvedAnimation(parent: _floatCtrl, curve: Curves.easeInOut));
+        CurvedAnimation(parent: _floatCtrl, curve: Curves.easeInOut));
     _shadowScale = Tween<double>(begin: 0.85, end: 1.15).animate(
-      CurvedAnimation(parent: _floatCtrl, curve: Curves.easeInOut));
+        CurvedAnimation(parent: _floatCtrl, curve: Curves.easeInOut));
 
     // 세 점 애니메이션
     _dotsCtrl = AnimationController(
@@ -67,13 +64,91 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
       duration: const Duration(milliseconds: 1800),
     )..repeat(reverse: true);
     _pulseAnim = Tween<double>(begin: 0.7, end: 1.0).animate(
-      CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
+        CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
+
+    _initWebSocket();
+  }
+
+  // ── WebSocket (STOMP) ────────────────────────────────────────────────────
+  Future<void> _initWebSocket() async {
+    final token = await TokenStorage().getAccessToken();
+    if (token == null || !mounted) return;
+
+    final userId = MatchService.extractUserIdFromJwt(token);
+    if (userId == null || !mounted) return;
+
+    _stompClient = StompClient(
+      config: StompConfig(
+        url: ApiClient.wsUrl,
+        onConnect: _onStompConnect(userId),
+        stompConnectHeaders: {'Authorization': 'Bearer $token'},
+        webSocketConnectHeaders: {'Authorization': 'Bearer $token'},
+        onWebSocketError: (dynamic error) =>
+            // ignore: avoid_print
+            print('[WS] 오류: $error'),
+        onWebSocketDone: () =>
+            // ignore: avoid_print
+            print('[WS] 연결 종료'),
+      ),
+    );
+    _stompClient?.activate();
+  }
+
+  void Function(StompFrame) _onStompConnect(String userId) {
+    return (_) {
+      _stompClient?.subscribe(
+        destination: '/topic/user/$userId/match',
+        callback: (frame) {
+          if (!mounted) return;
+          String? matchSessionId;
+          try {
+            final body = frame.body;
+            if (body != null && body.isNotEmpty) {
+              final data = jsonDecode(body) as Map<String, dynamic>;
+              matchSessionId = data['matchSessionId'] as String?;
+            }
+          } catch (_) {}
+          _onMatchFound(matchSessionId);
+        },
+      );
+    };
+  }
+
+  void _onMatchFound(String? matchSessionId) {
+    if (!mounted) return;
+    _stompClient?.deactivate();
+    Navigator.of(context).pushReplacement(PageRouteBuilder(
+      pageBuilder: (_, _, _) =>
+          MatchFoundScreen(matchSessionId: matchSessionId),
+      transitionsBuilder: (_, anim, _, child) =>
+          FadeTransition(opacity: anim, child: child),
+      transitionDuration: const Duration(milliseconds: 400),
+    ));
+  }
+
+  Future<void> _onCancel() async {
+    if (_isCancelling) return;
+    setState(() => _isCancelling = true);
+    _stompClient?.deactivate();
+    await _matchService.cancelQueue();
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  // ── 앱 생명주기: 백그라운드 진입 시 큐 취소 ────────────────────────────
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _matchService.cancelQueue();
+      _stompClient?.deactivate();
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
-    _matchTimer?.cancel();
+    _stompClient?.deactivate();
     _floatCtrl.dispose();
     _dotsCtrl.dispose();
     _pulseCtrl.dispose();
@@ -83,8 +158,8 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
   String get _timeDisplay {
     final m = _seconds ~/ 60;
     final s = _seconds % 60;
-    if (m > 0) return '${m}분 ${s.toString().padLeft(2, '0')}초';
-    return '${s}초';
+    if (m > 0) return '$m분 ${s.toString().padLeft(2, '0')}초';
+    return '$s초';
   }
 
   @override
@@ -161,7 +236,6 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
   // ── 탐색 중 텍스트 + 점 ──────────────────────────────────────────────────
   Widget _buildSearchingSection() {
     return Column(children: [
-      // 펄스 링 + 텍스트
       AnimatedBuilder(
         animation: _pulseAnim,
         builder: (_, child) => Opacity(
@@ -179,10 +253,9 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
         ),
       ),
       const SizedBox(height: 18),
-      // 세 점 (staggered bounce)
       AnimatedBuilder(
         animation: _dotsCtrl,
-        builder: (_, __) => Row(
+        builder: (_, _) => Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: List.generate(3, (i) {
             final offset = i / 3.0;
@@ -226,7 +299,7 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 56),
       child: GestureDetector(
-        onTap: () => Navigator.of(context).pop(),
+        onTap: _isCancelling ? null : _onCancel,
         child: Container(
           height: 54,
           decoration: BoxDecoration(
@@ -241,17 +314,27 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
               blurRadius: 10, offset: const Offset(0, 4),
             )],
           ),
-          child: const Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.close_rounded, color: Color(0xFFFF8080), size: 20),
-              SizedBox(width: 8),
-              Text('취소', style: TextStyle(
-                color: Color(0xFFFF8080),
-                fontSize: 16, fontWeight: FontWeight.w700,
-              )),
-            ],
-          ),
+          child: _isCancelling
+              ? const Center(
+                  child: SizedBox(
+                    width: 20, height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Color(0xFFFF8080),
+                    ),
+                  ),
+                )
+              : const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.close_rounded, color: Color(0xFFFF8080), size: 20),
+                    SizedBox(width: 8),
+                    Text('취소', style: TextStyle(
+                      color: Color(0xFFFF8080),
+                      fontSize: 16, fontWeight: FontWeight.w700,
+                    )),
+                  ],
+                ),
         ),
       ),
     );
@@ -271,7 +354,7 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
   }
 }
 
-// ─── 배경 페인터 (홈 화면과 동일) ────────────────────────────────────────────
+// ─── 배경 페인터 ──────────────────────────────────────────────────────────────
 
 class _BgPainter extends CustomPainter {
   @override

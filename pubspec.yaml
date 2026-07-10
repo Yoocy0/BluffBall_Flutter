@@ -39,6 +39,7 @@ dependencies:
   kakao_flutter_sdk_auth: ^2.0.0+1
   google_sign_in: ^6.2.1
   sign_in_with_apple: ^8.1.0
+  stomp_dart_client: ^3.0.1
 
 dev_dependencies:
   flutter_test:
