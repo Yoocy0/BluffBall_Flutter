@@ -103,7 +103,7 @@ class _SetupScreenState extends State<SetupScreen> {
 
   @override
   void dispose() {
-    _ws.disconnect();
+    // 연결은 PitchSelectionScreen에서 계속 사용하므로 여기서 끊지 않음
     super.dispose();
   }
 
@@ -193,6 +193,12 @@ class _SetupScreenState extends State<SetupScreen> {
         pageBuilder: (_, __, ___) => PitchSelectionScreen(
           gameMode: widget.gameMode,
           matchSessionId: widget.matchSessionId ?? '',
+          setupNumbers: {
+            '아웃': List<int>.from(_selected[_Step.out]!..sort()),
+            '병살': List<int>.from(_selected[_Step.doublePlay]!..sort()),
+            '3루타': List<int>.from(_selected[_Step.triple]!..sort()),
+            '홈런': List<int>.from(_selected[_Step.homerun]!..sort()),
+          },
         ),
         transitionsBuilder: (_, anim, __, child) =>
             FadeTransition(opacity: anim, child: child),

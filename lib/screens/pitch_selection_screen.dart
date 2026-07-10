@@ -1,36 +1,18 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../models/card_hand_event.dart';
+import '../models/card_info.dart';
 import '../models/game_mode.dart';
-import '../models/pitch_card_data.dart';
+import '../services/game_websocket_service.dart';
+import '../services/match_service.dart';
+import '../services/token_storage.dart';
 import '../widgets/mode_background.dart';
 
 // ─── Phase state machine ──────────────────────────────────────────────────────
 
-enum _Phase { dealing, idle, collecting, shuffling, redealing }
-
-// ─── Mock data (백엔드 연결 전 임시) ─────────────────────────────────────────
-
-List<PitchCardData> _mockCardsForMode(GameMode mode) => switch (mode) {
-      GameMode.teamRegular => const [
-          PitchCardData(id: '1', name: '포심 패스트볼', direction: '↓', change: 0, timing: '이른'),
-          PitchCardData(id: '2', name: '투심 패스트볼', direction: '↙', change: -1, timing: '이른'),
-          PitchCardData(id: '3', name: '슬라이더', direction: '↘', change: -2, timing: '보통'),
-          PitchCardData(id: '4', name: '체인지업', direction: '↓', change: -3, timing: '늦은'),
-          PitchCardData(id: '5', name: '커브', direction: '↙', change: -3, timing: '늦은'),
-        ],
-      GameMode.teamMini => const [
-          PitchCardData(id: '1', name: '포심 패스트볼', direction: '↓', change: 0, timing: '이른'),
-          PitchCardData(id: '2', name: '슬라이더', direction: '↘', change: -2, timing: '보통'),
-          PitchCardData(id: '3', name: '커브', direction: '↙', change: -3, timing: '늦은'),
-          PitchCardData(id: '4', name: '체인지업', direction: '↓', change: -2, timing: '늦은'),
-        ],
-      _ => const [
-          PitchCardData(id: '1', name: '포심 패스트볼', direction: '↓', change: 0, timing: '이른'),
-          PitchCardData(id: '2', name: '슬라이더', direction: '↘', change: -2, timing: '보통'),
-          PitchCardData(id: '3', name: '커브', direction: '↙', change: -3, timing: '늦은'),
-        ],
-    };
+enum _Phase { waiting, dealing, idle, collecting, shuffling, redealing }
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
@@ -38,10 +20,14 @@ class PitchSelectionScreen extends StatefulWidget {
   final GameMode gameMode;
   final String matchSessionId;
 
+  /// 셋업 숫자 선택 결과 { '아웃': [...], '병살': [...], '3루타': [...], '홈런': [...] }
+  final Map<String, List<int>> setupNumbers;
+
   const PitchSelectionScreen({
     super.key,
     required this.gameMode,
     required this.matchSessionId,
+    this.setupNumbers = const {},
   });
 
   @override
@@ -52,23 +38,26 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
     with TickerProviderStateMixin {
   // ── Data state ────────────────────────────────────────────────────────────
 
-  late List<PitchCardData> _cards;
-  final Set<String> _selectedIds = {};
+  List<CardInfo> _cards = [];
+  List<CardInfo>? _originalCards; // 교체 전 카드 (비교용)
+  final Set<int> _selectedIds = {};
   bool _hasReplaced = false;
-  _Phase _phase = _Phase.dealing;
-
-  /// 현재 교체 중인 카드의 인덱스
+  _Phase _phase = _Phase.waiting;
   Set<int> _replacingIndices = {};
+
+  // ── WebSocket ─────────────────────────────────────────────────────────────
+
+  final _ws = GameWebSocketService.instance;
+  int? _currentUserId;
+
+  /// 멀리건 응답 대기용 Completer
+  Completer<CardHandEvent>? _mulliganCompleter;
+  bool _isConfirming = false;
 
   // ── Animation controllers ─────────────────────────────────────────────────
 
-  /// 최초 딜 (또는 재딜) 애니메이션
   late AnimationController _dealCtrl;
-
-  /// 선택 카드를 덱으로 수집하는 애니메이션
   late AnimationController _collectCtrl;
-
-  /// 덱 셔플 루프 애니메이션
   late AnimationController _shuffleCtrl;
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -76,11 +65,11 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
   @override
   void initState() {
     super.initState();
-    _cards = _mockCardsForMode(widget.gameMode);
 
+    // 카드 수 미확정이므로 placeholder duration으로 초기화
     _dealCtrl = AnimationController(
       vsync: this,
-      duration: _staggeredDuration(_cards.length),
+      duration: const Duration(milliseconds: 100),
     );
     _collectCtrl = AnimationController(
       vsync: this,
@@ -91,26 +80,103 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
       duration: const Duration(milliseconds: 480),
     );
 
-    _runDealSequence(_dealCtrl);
+    _initWebSocket();
   }
 
   @override
   void dispose() {
+    _ws.unsubscribeGameTopic();
+    _ws.disconnect();
     _dealCtrl.dispose();
     _collectCtrl.dispose();
     _shuffleCtrl.dispose();
     super.dispose();
   }
 
+  // ── WebSocket init ────────────────────────────────────────────────────────
+
+  Future<void> _initWebSocket() async {
+    final token = await TokenStorage().getAccessToken();
+    if (token == null || !mounted) return;
+
+    final userIdStr = MatchService.extractUserIdFromJwt(token);
+    _currentUserId = userIdStr != null ? int.tryParse(userIdStr) : null;
+
+    // ignore: avoid_print
+    print('[PitchScreen] userId from JWT: "$userIdStr" → int: $_currentUserId');
+    // ignore: avoid_print
+    print('[PitchScreen] WS isConnected: ${_ws.isConnected}');
+
+    if (_ws.isConnected) {
+      _subscribeToGameTopic();
+    } else {
+      // SetupScreen에서 연결이 끊겼을 경우 재연결
+      _ws.connect(
+        accessToken: token,
+        onConnected: () {
+          // ignore: avoid_print
+          print('[PitchScreen] WS 재연결 성공, 구독 시작');
+          if (mounted) _subscribeToGameTopic();
+        },
+        onError: (msg) {
+          // ignore: avoid_print
+          print('[PitchScreen] WS 연결 실패: $msg');
+          if (mounted) {
+            _showSnackBar('서버 연결 실패: $msg', isError: true);
+          }
+        },
+      );
+    }
+  }
+
+  void _subscribeToGameTopic() {
+    if (_currentUserId == null) return;
+    _ws.subscribeGameTopic(
+      matchSessionId: widget.matchSessionId,
+      currentUserId: _currentUserId!,
+      onEvent: _handleCardHandEvent,
+      onAllReady: _handleAllReady,
+    );
+  }
+
+  void _handleCardHandEvent(CardHandEvent event) {
+    if (!mounted) return;
+    if (event.fromMulligan) {
+      _mulliganCompleter?.complete(event);
+    } else {
+      _onInitialDeal(event.cardInfos);
+    }
+  }
+
+  void _handleAllReady(bool allReady) {
+    // TODO: 양측 멀리건 완료 시 게임 플레이 화면으로 전환
+  }
+
+  void _onInitialDeal(List<CardInfo> cards) {
+    if (!mounted || cards.isEmpty) return;
+
+    _dealCtrl.dispose();
+    _dealCtrl = AnimationController(
+      vsync: this,
+      duration: _staggeredDuration(cards.length),
+    );
+
+    setState(() {
+      _cards = cards;
+      _phase = _Phase.dealing;
+    });
+
+    _runDealSequence(_dealCtrl);
+  }
+
   // ── Duration helpers ──────────────────────────────────────────────────────
 
-  /// 카드 수에 따라 딜 애니메이션 전체 길이 계산
   static Duration _staggeredDuration(int n) =>
       Duration(milliseconds: (n - 1) * 130 + 560);
 
-  /// 카드 i의 애니메이션 구간 (Interval 기준 0~1)
   Animation<double> _dealInterval(int i, AnimationController ctrl) {
-    final totalMs = _staggeredDuration(_cards.length).inMilliseconds.toDouble();
+    final totalMs =
+        _staggeredDuration(_cards.length).inMilliseconds.toDouble();
     final start = (i * 130.0) / totalMs;
     final end = (i * 130.0 + 560.0) / totalMs;
     return CurvedAnimation(
@@ -133,7 +199,7 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
 
   // ── User interactions ─────────────────────────────────────────────────────
 
-  void _toggleSelect(String id) {
+  void _toggleSelect(int id) {
     if (_phase != _Phase.idle || _hasReplaced) return;
     setState(() {
       if (_selectedIds.contains(id)) {
@@ -149,45 +215,71 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
 
     _replacingIndices = {
       for (int i = 0; i < _cards.length; i++)
-        if (_selectedIds.contains(_cards[i].id)) i,
+        if (_selectedIds.contains(_cards[i].cardId)) i,
     };
 
-    // ── 1단계: 수집 (선택 카드 → 덱) ──────────────────────────────────────
+    // 교체 전 패 저장
+    final previousCards = List<CardInfo>.from(_cards);
+
+    // ── 1단계: 수집 애니메이션 ───────────────────────────────────────────
     setState(() => _phase = _Phase.collecting);
     await _collectCtrl.forward(from: 0);
     if (!mounted) return;
 
-    // ── 2단계: 셔플 루프 (API 대기 중) ────────────────────────────────────
+    // ── 2단계: 셔플 + WebSocket 요청 동시 진행 ───────────────────────────
     setState(() => _phase = _Phase.shuffling);
     _shuffleCtrl.repeat();
 
-    // TODO: 실제 WebSocket 교체 요청으로 교체
-    await Future.delayed(const Duration(milliseconds: 1300));
-    if (!mounted) return;
+    _mulliganCompleter = Completer<CardHandEvent>();
+    final sent = _ws.sendMulligan(
+      matchSessionId: widget.matchSessionId,
+      cardIdsToSwap: _selectedIds.toList(),
+    );
 
-    // ── 새 카드 데이터 적용 (mock) ─────────────────────────────────────────
-    final updatedCards = List<PitchCardData>.from(_cards);
-    final pool = _mockCardsForMode(widget.gameMode);
-    for (final i in _replacingIndices) {
-      updatedCards[i] = pool[i % pool.length].copyWith(id: 'r$i');
+    List<CardInfo> newCards = _cards;
+    if (sent) {
+      try {
+        final event = await _mulliganCompleter!.future
+            .timeout(const Duration(seconds: 15));
+        newCards = event.cardInfos;
+      } catch (_) {
+        if (mounted) _showSnackBar('교체 응답 시간 초과. 기존 패를 유지합니다.', isError: true);
+      }
+    } else {
+      if (mounted) _showSnackBar('전송 실패. 기존 패를 유지합니다.', isError: true);
     }
+    _mulliganCompleter = null;
 
+    if (!mounted) return;
     _shuffleCtrl.stop();
     _shuffleCtrl.reset();
     _collectCtrl.reset();
 
+    // ── 새 카드 매핑: 교체된 인덱스에만 새 카드 적용 ──────────────────────
+    final updatedCards = List<CardInfo>.from(_cards);
+    if (newCards.length == _cards.length) {
+      for (final i in _replacingIndices) {
+        updatedCards[i] = newCards[i];
+      }
+    } else {
+      // 카드 수가 달라졌을 경우 전체 교체
+      updatedCards
+        ..clear()
+        ..addAll(newCards);
+    }
+
     setState(() {
+      _originalCards = previousCards;
       _cards = updatedCards;
       _selectedIds.clear();
       _hasReplaced = true;
       _phase = _Phase.redealing;
     });
 
-    // ── 3단계: 재딜 (새 카드 등장) ────────────────────────────────────────
-    // 교체된 카드만 새로 딜
+    // ── 3단계: 재딜 애니메이션 ───────────────────────────────────────────
     final redealCtrl = AnimationController(
       vsync: this,
-      duration: _staggeredDuration(_replacingIndices.length),
+      duration: _staggeredDuration(_replacingIndices.length.clamp(1, 99)),
     );
     await redealCtrl.forward(from: 0);
     redealCtrl.dispose();
@@ -195,9 +287,51 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
     if (mounted) setState(() => _phase = _Phase.idle);
   }
 
-  void _onConfirm() {
-    if (_phase != _Phase.idle) return;
-    // TODO: WebSocket으로 확정 구종 전송 후 게임플레이 화면으로 전환
+  Future<void> _onConfirm() async {
+    if (_phase != _Phase.idle || _isConfirming) return;
+    setState(() => _isConfirming = true);
+
+    _mulliganCompleter = Completer<CardHandEvent>();
+    final sent = _ws.sendMulligan(
+      matchSessionId: widget.matchSessionId,
+      cardIdsToSwap: const [],
+    );
+
+    if (!sent) {
+      _mulliganCompleter = null;
+      if (mounted) {
+        setState(() => _isConfirming = false);
+        _showSnackBar('서버 전송 실패. 다시 시도해주세요.', isError: true);
+      }
+      return;
+    }
+
+    try {
+      // 서버의 allMulliganReady 응답 대기
+      await _mulliganCompleter!.future.timeout(const Duration(seconds: 15));
+    } catch (_) {
+      if (mounted) _showSnackBar('응답 시간 초과.', isError: true);
+    }
+    _mulliganCompleter = null;
+    if (mounted) setState(() => _isConfirming = false);
+    // TODO: allMulliganReady 수신 시 게임플레이 화면으로 이동
+  }
+
+  void _showSnackBar(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message,
+            style: const TextStyle(fontWeight: FontWeight.w600)),
+        backgroundColor:
+            isError ? const Color(0xFFD32F2F) : const Color(0xFF388E3C),
+        behavior: SnackBarBehavior.floating,
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+        duration: Duration(seconds: isError ? 4 : 2),
+      ),
+    );
   }
 
   // ── Build ─────────────────────────────────────────────────────────────────
@@ -212,12 +346,110 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
           SafeArea(
             child: Column(children: [
               _buildHeader(),
-              Expanded(child: _buildCardsArea()),
+              if (widget.setupNumbers.isNotEmpty) _buildSetupSummary(),
+              Expanded(
+                child: _phase == _Phase.waiting
+                    ? _buildWaitingState()
+                    : _buildCardsArea(),
+              ),
               _buildBottomButtons(),
               const SizedBox(height: 24),
             ]),
           ),
         ]),
+      ),
+    );
+  }
+
+  // ── Setup summary bar ─────────────────────────────────────────────────────
+
+  static const _kSetupColors = {
+    '아웃': Color(0xFF9E9E9E),
+    '병살': Color(0xFFBB66FF),
+    '3루타': Color(0xFF448AFF),
+    '홈런': Color(0xFFFF5252),
+  };
+
+  Widget _buildSetupSummary() {
+    final entries = widget.setupNumbers.entries.toList();
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.40),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.09)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.lock_outline_rounded,
+              size: 12, color: Colors.white.withValues(alpha: 0.35)),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 2,
+              children: entries.map((e) {
+                final color =
+                    _kSetupColors[e.key] ?? Colors.white;
+                final nums = e.value.join(' · ');
+                return RichText(
+                  text: TextSpan(
+                    children: [
+                      TextSpan(
+                        text: '${e.key} ',
+                        style: TextStyle(
+                          color: color.withValues(alpha: 0.85),
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      TextSpan(
+                        text: nums,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.75),
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Waiting state ─────────────────────────────────────────────────────────
+
+  Widget _buildWaitingState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(
+            width: 40,
+            height: 40,
+            child: CircularProgressIndicator(
+              color: Color(0xFFFFD700),
+              strokeWidth: 3,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            '카드를 받는 중...',
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.65),
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.5,
+              shadows: const [Shadow(blurRadius: 8, color: Colors.black87)],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -255,7 +487,9 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
                       : Colors.white.withValues(alpha: 0.60),
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
-                  shadows: const [Shadow(blurRadius: 6, color: Colors.black87)],
+                  shadows: const [
+                    Shadow(blurRadius: 6, color: Colors.black87)
+                  ],
                 ),
               ),
             ),
@@ -292,12 +526,15 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
   // ── Cards area ────────────────────────────────────────────────────────────
 
   Widget _buildCardsArea() {
+    // 교체 완료 후: 교체 전/후 2행 비교 레이아웃
+    if (_hasReplaced && _originalCards != null && _phase == _Phase.idle) {
+      return _buildComparisonLayout();
+    }
+
     return Column(
       children: [
-        // 덱 오버레이 (애니메이션 단계에서만 표시)
         _buildDeckOverlay(),
         const SizedBox(height: 8),
-        // 카드 행
         Expanded(
           child: Center(
             child: SingleChildScrollView(
@@ -320,13 +557,99 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
     );
   }
 
+  // ── Before / after comparison layout ─────────────────────────────────────
+
+  Widget _buildComparisonLayout() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 8),
+          // ── 교체 전 ────────────────────────────────────────────────────
+          _buildComparisonLabel('교체 전', Colors.white.withValues(alpha: 0.40)),
+          const SizedBox(height: 6),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (int i = 0; i < _originalCards!.length; i++) ...[
+                  Opacity(
+                    opacity: 0.45,
+                    child: _SmallCardWidget(
+                      card: _originalCards![i],
+                      isReplaced: _replacingIndices.contains(i),
+                    ),
+                  ),
+                  if (i < _originalCards!.length - 1)
+                    const SizedBox(width: 8),
+                ],
+              ],
+            ),
+          ),
+          // ── 화살표 ─────────────────────────────────────────────────────
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 10),
+            child: Row(
+              children: [
+                Expanded(child: Divider(color: Colors.white24, thickness: 0.6)),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 10),
+                  child: Icon(Icons.keyboard_double_arrow_down_rounded,
+                      color: Color(0xFFFFD700), size: 22),
+                ),
+                Expanded(child: Divider(color: Colors.white24, thickness: 0.6)),
+              ],
+            ),
+          ),
+          // ── 교체 후 ────────────────────────────────────────────────────
+          _buildComparisonLabel('교체 후', const Color(0xFF7CFC00)),
+          const SizedBox(height: 6),
+          Expanded(
+            child: Center(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (int i = 0; i < _cards.length; i++) ...[
+                      _buildCardSlot(i),
+                      if (i < _cards.length - 1) const SizedBox(width: 10),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildComparisonLabel(String text, Color color) {
+    return Text(
+      text,
+      style: TextStyle(
+        color: color,
+        fontSize: 11,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.8,
+        shadows: const [Shadow(blurRadius: 4, color: Colors.black87)],
+      ),
+    );
+  }
+
   // ── Deck overlay ──────────────────────────────────────────────────────────
 
   Widget _buildDeckOverlay() {
-    final visible = _phase != _Phase.idle;
+    final visible = _phase != _Phase.idle && _phase != _Phase.waiting;
     return AnimatedContainer(
       duration: const Duration(milliseconds: 250),
       height: visible ? 90 : 0,
+      clipBehavior: Clip.hardEdge,
+      decoration: const BoxDecoration(),
       child: AnimatedOpacity(
         opacity: visible ? 1.0 : 0.0,
         duration: const Duration(milliseconds: 200),
@@ -375,7 +698,9 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0.5,
-                shadows: const [Shadow(blurRadius: 4, color: Colors.black87)],
+                shadows: const [
+                  Shadow(blurRadius: 4, color: Colors.black87)
+                ],
               ),
             ),
           ],
@@ -417,11 +742,11 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
 
   Widget _buildCardSlot(int i) {
     final card = _cards[i];
-    final isSelected = _selectedIds.contains(card.id);
+    final isSelected = _selectedIds.contains(card.cardId);
     final isReplacing = _replacingIndices.contains(i);
     final canInteract = _phase == _Phase.idle && !_hasReplaced;
 
-    // ── 최초 딜 애니메이션 ────────────────────────────────────────────────
+    // 최초 딜 애니메이션
     if (_phase == _Phase.dealing) {
       final anim = _dealInterval(i, _dealCtrl);
       return _withDealTransform(
@@ -431,7 +756,7 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
       );
     }
 
-    // ── 수집 애니메이션 (선택된 카드만) ──────────────────────────────────
+    // 수집 애니메이션 (선택된 카드만)
     if (_phase == _Phase.collecting && isReplacing) {
       return AnimatedBuilder(
         animation: _collectCtrl,
@@ -439,57 +764,53 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
           offset: Offset(0, -180.0 * _collectCtrl.value),
           child: Transform.scale(
             scale: 1.0 - _collectCtrl.value * 0.6,
-            child: Opacity(opacity: 1.0 - _collectCtrl.value, child: child),
+            child:
+                Opacity(opacity: 1.0 - _collectCtrl.value, child: child),
           ),
         ),
         child: _PitchCardWidget(card: card, isSelected: true, onTap: null),
       );
     }
 
-    // ── 셔플 중: 교체 슬롯은 빈 자리 표시 ────────────────────────────────
+    // 셔플 중: 교체 슬롯은 빈 자리
     if ((_phase == _Phase.shuffling || _phase == _Phase.collecting) &&
         isReplacing) {
       return _CardPlaceholder(width: _kCardW, height: _kCardH);
     }
 
-    // ── 재딜 애니메이션 (교체된 카드만) ──────────────────────────────────
+    // 재딜 애니메이션 (교체된 카드만)
     if (_phase == _Phase.redealing && isReplacing) {
-      // 교체 인덱스 내에서의 순서
-      final localIdx =
-          _replacingIndices.toList().indexOf(i).clamp(0, _replacingIndices.length - 1);
-      return AnimatedBuilder(
-        animation: _collectCtrl, // collectCtrl이 0으로 리셋됨 → 이 시점엔 0
-        builder: (_, child) {
-          // 딜레이: 교체 인덱스 순서마다 100ms
-          return FutureBuilder<void>(
-            future: Future.delayed(Duration(milliseconds: localIdx * 100)),
-            builder: (_, snapshot) {
-              if (snapshot.connectionState != ConnectionState.done) {
-                return _CardPlaceholder(width: _kCardW, height: _kCardH);
-              }
-              return TweenAnimationBuilder<double>(
-                tween: Tween(begin: 0.0, end: 1.0),
-                duration: const Duration(milliseconds: 480),
-                curve: Curves.easeOutBack,
-                builder: (_, v, child) => _withDealTransformValue(
-                  value: v,
-                  direction: i.isEven ? 1 : -1,
-                  child: child!,
-                ),
-                child: _PitchCardWidget(card: card, isSelected: false, onTap: null),
-              );
-            },
+      final localIdx = _replacingIndices
+          .toList()
+          .indexOf(i)
+          .clamp(0, _replacingIndices.length - 1);
+      return FutureBuilder<void>(
+        future: Future.delayed(Duration(milliseconds: localIdx * 100)),
+        builder: (_, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return _CardPlaceholder(width: _kCardW, height: _kCardH);
+          }
+          return TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0.0, end: 1.0),
+            duration: const Duration(milliseconds: 480),
+            curve: Curves.easeOutBack,
+            builder: (_, v, child) => _withDealTransformValue(
+              value: v,
+              direction: i.isEven ? 1 : -1,
+              child: child!,
+            ),
+            child:
+                _PitchCardWidget(card: card, isSelected: false, onTap: null),
           );
         },
-        child: _CardPlaceholder(width: _kCardW, height: _kCardH),
       );
     }
 
-    // ── 기본 상태 ─────────────────────────────────────────────────────────
+    // 기본 상태
     return _PitchCardWidget(
       card: card,
       isSelected: isSelected,
-      onTap: canInteract ? () => _toggleSelect(card.id) : null,
+      onTap: canInteract ? () => _toggleSelect(card.cardId) : null,
     );
   }
 
@@ -529,15 +850,20 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
   // ── Bottom buttons ────────────────────────────────────────────────────────
 
   Widget _buildBottomButtons() {
-    final canReplace =
-        _selectedIds.isNotEmpty && !_hasReplaced && _phase == _Phase.idle;
-    final isAnimating = _phase != _Phase.idle;
+    final canReplace = _selectedIds.isNotEmpty &&
+        !_hasReplaced &&
+        _phase == _Phase.idle &&
+        !_isConfirming;
+    final isAnimating =
+        _phase != _Phase.idle && _phase != _Phase.waiting;
+    final canConfirm =
+        _phase == _Phase.idle && !isAnimating && !_isConfirming;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
       child: Row(
         children: [
-          // ── 교체 버튼 ──────────────────────────────────────────────────
+          // ── 교체 버튼 ────────────────────────────────────────────────
           Expanded(
             child: GestureDetector(
               onTap: canReplace ? _onReplace : null,
@@ -557,7 +883,8 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
                   boxShadow: canReplace
                       ? [
                           BoxShadow(
-                            color: const Color(0xFF1565C0).withValues(alpha: 0.40),
+                            color: const Color(0xFF1565C0)
+                                .withValues(alpha: 0.40),
                             blurRadius: 12,
                             offset: const Offset(0, 4),
                           )
@@ -570,9 +897,7 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
                           width: 20,
                           height: 20,
                           child: CircularProgressIndicator(
-                            color: Colors.white54,
-                            strokeWidth: 2,
-                          ),
+                              color: Colors.white54, strokeWidth: 2),
                         )
                       : Row(
                           mainAxisSize: MainAxisSize.min,
@@ -602,32 +927,35 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
             ),
           ),
           const SizedBox(width: 12),
-          // ── 확정 버튼 ──────────────────────────────────────────────────
+          // ── 확정 버튼 ────────────────────────────────────────────────
           Expanded(
             child: GestureDetector(
-              onTap: !isAnimating ? _onConfirm : null,
+              onTap: canConfirm ? _onConfirm : null,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 220),
                 height: 54,
                 decoration: BoxDecoration(
-                  gradient: !isAnimating
+                  gradient: canConfirm
                       ? const LinearGradient(
                           colors: [Color(0xFF8AFF2A), Color(0xFF4CAF50)],
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                         )
                       : null,
-                  color: isAnimating ? Colors.white.withValues(alpha: 0.08) : null,
+                  color: canConfirm
+                      ? null
+                      : Colors.white.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(
-                    color: isAnimating
-                        ? Colors.white.withValues(alpha: 0.14)
-                        : Colors.transparent,
+                    color: canConfirm
+                        ? Colors.transparent
+                        : Colors.white.withValues(alpha: 0.14),
                   ),
-                  boxShadow: !isAnimating
+                  boxShadow: canConfirm
                       ? [
                           BoxShadow(
-                            color: const Color(0xFF7CFC00).withValues(alpha: 0.38),
+                            color: const Color(0xFF7CFC00)
+                                .withValues(alpha: 0.38),
                             blurRadius: 14,
                             spreadRadius: 1,
                             offset: const Offset(0, 4),
@@ -636,17 +964,24 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
                       : null,
                 ),
                 child: Center(
-                  child: Text(
-                    '확정',
-                    style: TextStyle(
-                      color: !isAnimating
-                          ? Colors.white
-                          : Colors.white.withValues(alpha: 0.28),
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
+                  child: _isConfirming
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                              color: Colors.white, strokeWidth: 2.5),
+                        )
+                      : Text(
+                          '확정',
+                          style: TextStyle(
+                            color: canConfirm
+                                ? Colors.white
+                                : Colors.white.withValues(alpha: 0.28),
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
                 ),
               ),
             ),
@@ -665,7 +1000,7 @@ const double _kCardH = 158.0;
 // ─── Pitch card widget ────────────────────────────────────────────────────────
 
 class _PitchCardWidget extends StatelessWidget {
-  final PitchCardData card;
+  final CardInfo card;
   final bool isSelected;
   final VoidCallback? onTap;
 
@@ -710,9 +1045,7 @@ class _PitchCardWidget extends StatelessWidget {
           children: [
             // 타이밍 컬러 상단 바
             Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
+              top: 0, left: 0, right: 0,
               child: Container(
                 height: 4,
                 decoration: BoxDecoration(
@@ -736,7 +1069,9 @@ class _PitchCardWidget extends StatelessWidget {
                       fontSize: 12.5,
                       fontWeight: FontWeight.w800,
                       height: 1.25,
-                      shadows: [Shadow(blurRadius: 4, color: Colors.black54)],
+                      shadows: [
+                        Shadow(blurRadius: 4, color: Colors.black54)
+                      ],
                     ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
@@ -745,7 +1080,7 @@ class _PitchCardWidget extends StatelessWidget {
                   // 방향 화살표 (크게)
                   Center(
                     child: Text(
-                      card.direction,
+                      card.directionArrow,
                       style: TextStyle(
                         color: card.timingColor,
                         fontSize: 42,
@@ -762,22 +1097,22 @@ class _PitchCardWidget extends StatelessWidget {
                   ),
                   const Spacer(),
                   // 스탯 행
-                  _StatRow(label: '방향', value: card.direction),
+                  _StatRow(label: '방향', value: card.directionArrow),
                   const SizedBox(height: 3),
-                  _StatRow(label: '변화', value: card.changeLabel),
+                  _StatRow(label: '변화', value: '${card.changeAmount}'),
                   const SizedBox(height: 3),
                   _StatRow(
-                      label: '타이밍',
-                      value: card.timing,
-                      valueColor: card.timingColor),
+                    label: '타이밍',
+                    value: card.timingLabel,
+                    valueColor: card.timingColor,
+                  ),
                 ],
               ),
             ),
             // 선택 체크 뱃지
             if (isSelected)
               Positioned(
-                top: 8,
-                right: 8,
+                top: 8, right: 8,
                 child: Container(
                   width: 20,
                   height: 20,
@@ -831,6 +1166,130 @@ class _StatRow extends StatelessWidget {
   }
 }
 
+// ─── Small card (교체 전 표시용) ──────────────────────────────────────────────
+
+class _SmallCardWidget extends StatelessWidget {
+  final CardInfo card;
+  final bool isReplaced;
+
+  const _SmallCardWidget({required this.card, required this.isReplaced});
+
+  static const double _w = 72.0;
+  static const double _h = 106.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Container(
+          width: _w,
+          height: _h,
+          decoration: BoxDecoration(
+            color: const Color(0xFF12122A).withValues(alpha: 0.90),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isReplaced
+                  ? const Color(0xFFFF5252).withValues(alpha: 0.55)
+                  : Colors.white.withValues(alpha: 0.14),
+              width: 1.2,
+            ),
+          ),
+          child: Stack(
+            children: [
+              Positioned(
+                top: 0, left: 0, right: 0,
+                child: Container(
+                  height: 3,
+                  decoration: BoxDecoration(
+                    color: card.timingColor,
+                    borderRadius:
+                        const BorderRadius.vertical(top: Radius.circular(9)),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(7, 10, 7, 7),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      card.name,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        height: 1.2,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const Spacer(),
+                    Center(
+                      child: Text(
+                        card.directionArrow,
+                        style: TextStyle(
+                          color: card.timingColor,
+                          fontSize: 28,
+                          fontWeight: FontWeight.w900,
+                          height: 1,
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('변화',
+                            style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.40),
+                                fontSize: 8)),
+                        Text('${card.changeAmount}',
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 8,
+                                fontWeight: FontWeight.w700)),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('타이밍',
+                            style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.40),
+                                fontSize: 8)),
+                        Text(card.timingLabel,
+                            style: TextStyle(
+                                color: card.timingColor,
+                                fontSize: 8,
+                                fontWeight: FontWeight.w700)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        // 교체된 카드 X 표시
+        if (isReplaced)
+          Positioned.fill(
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Center(
+                child: Icon(Icons.close_rounded,
+                    color: Color(0xFFFF5252), size: 20),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
 // ─── Empty slot placeholder ───────────────────────────────────────────────────
 
 class _CardPlaceholder extends StatelessWidget {
@@ -848,7 +1307,6 @@ class _CardPlaceholder extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
           color: Colors.white.withValues(alpha: 0.08),
-          style: BorderStyle.solid,
         ),
       ),
     );
