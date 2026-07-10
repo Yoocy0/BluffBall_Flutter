@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/auth_service.dart';
+import '../services/match_service.dart';
 import 'login_screen.dart';
+import 'match_found_screen.dart';
 import 'matchmaking_screen.dart';
 import '../models/game_mode.dart';
 
@@ -113,6 +115,9 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _navIndex = 2;     // 기본: 경기
   int _prevNavIndex = 2;
+  bool _singleModeLoading = false;
+
+  final _matchService = MatchService();
 
   void _onNavTap(int index) {
     if (index == _navIndex) return;
@@ -224,14 +229,11 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           Row(children: [
             Expanded(child: _BattleButton(
-              label: '싱글 모드', icon: Icons.person_rounded,
-              onTap: () => Navigator.of(context).push(PageRouteBuilder(
-                pageBuilder: (_, __, ___) => const MatchmakingScreen(gameMode: GameMode.single),
-                transitionsBuilder: (_, anim, __, child) => FadeTransition(
-                  opacity: anim, child: child,
-                ),
-                transitionDuration: const Duration(milliseconds: 350),
-              )),
+              label: _singleModeLoading ? '연결 중...' : '싱글 모드',
+              icon: _singleModeLoading
+                  ? Icons.hourglass_top_rounded
+                  : Icons.person_rounded,
+              onTap: _singleModeLoading ? () {} : _joinSingleMode,
               gradient: const LinearGradient(
                 begin: Alignment.topCenter, end: Alignment.bottomCenter,
                 colors: [Color(0xFFF5C542), Color(0xFFD4821A)],
@@ -437,6 +439,56 @@ class _HomeScreenState extends State<HomeScreen> {
       isScrollControlled: true,
       builder: (_) => const _UniformSettingsSheet(),
     );
+  }
+
+  Future<void> _joinSingleMode() async {
+    if (_singleModeLoading) return;
+    setState(() => _singleModeLoading = true);
+    try {
+      final result = await _matchService.joinQueue();
+      if (!mounted) return;
+
+      if (result.isMatched) {
+        // 즉시 매칭 → 매칭 완료 화면으로 바로 이동
+        Navigator.of(context).push(PageRouteBuilder(
+          pageBuilder: (_, __, ___) => MatchFoundScreen(
+            matchSessionId: result.matchSessionId,
+            gameMode: GameMode.single,
+          ),
+          transitionsBuilder: (_, anim, __, child) =>
+              FadeTransition(opacity: anim, child: child),
+          transitionDuration: const Duration(milliseconds: 350),
+        ));
+      } else {
+        // 대기 중 → 매칭 대기 화면으로 이동 (WebSocket에서 알림 수신)
+        Navigator.of(context).push(PageRouteBuilder(
+          pageBuilder: (_, __, ___) => const MatchmakingScreen(gameMode: GameMode.single),
+          transitionsBuilder: (_, anim, __, child) =>
+              FadeTransition(opacity: anim, child: child),
+          transitionDuration: const Duration(milliseconds: 350),
+        ));
+      }
+    } on MatchException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.message),
+            backgroundColor: const Color(0xFF3A1A05),
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('네트워크 오류가 발생했습니다.'),
+            backgroundColor: Color(0xFF3A1A05),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _singleModeLoading = false);
+    }
   }
 
   Future<void> _signOut(BuildContext context) async {

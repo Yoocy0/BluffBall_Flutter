@@ -10,6 +10,9 @@ import 'package:dio/dio.dart';
 class ApiClient {
   static const String baseUrl = 'https://zula-unelidible-thea.ngrok-free.dev';
 
+  /// STOMP WebSocket 엔드포인트 (https → wss)
+  static const String wsUrl = 'wss://zula-unelidible-thea.ngrok-free.dev/ws';
+
   /// HTTP baseUrl을 WebSocket URL로 변환 (https→wss, http→ws)
   static String get wsBaseUrl => baseUrl
       .replaceFirst('https://', 'wss://')

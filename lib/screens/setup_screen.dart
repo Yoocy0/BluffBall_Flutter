@@ -48,11 +48,11 @@ extension _CategoryX on _Category {
 
 class SetupScreen extends StatefulWidget {
   final GameMode gameMode;
-  final String matchSessionId;
+  final String? matchSessionId;
   const SetupScreen({
     super.key,
-    required this.gameMode,
-    required this.matchSessionId,
+    this.gameMode = GameMode.single,
+    this.matchSessionId,
   });
 
   @override
@@ -172,7 +172,7 @@ class _SetupScreenState extends State<SetupScreen> {
     );
 
     final sent = _ws.sendSetupNumbers(
-      matchSessionId: widget.matchSessionId,
+      matchSessionId: widget.matchSessionId ?? '',
       request: request,
     );
 

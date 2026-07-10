@@ -7,12 +7,13 @@ import 'setup_screen.dart';
 import '../models/game_mode.dart';
 
 class MatchFoundScreen extends StatefulWidget {
+  final String? matchSessionId;
   final GameMode gameMode;
-  final String matchSessionId;
+
   const MatchFoundScreen({
     super.key,
-    required this.gameMode,
-    required this.matchSessionId,
+    this.matchSessionId,
+    this.gameMode = GameMode.single,
   });
 
   @override
@@ -160,7 +161,7 @@ class _MatchFoundScreenState extends State<MatchFoundScreen>
   Widget _buildCheckIcon() {
     return AnimatedBuilder(
       animation: Listenable.merge([_checkCtrl, _glowCtrl]),
-      builder: (_, __) => Opacity(
+      builder: (_, _) => Opacity(
         opacity: _checkOpacity.value,
         child: Transform.scale(
           scale: _checkScale.value,
@@ -186,7 +187,7 @@ class _MatchFoundScreenState extends State<MatchFoundScreen>
               // 회전 링 (확인 중 표시)
               AnimatedBuilder(
                 animation: _ringCtrl,
-                builder: (_, __) => Transform.rotate(
+                builder: (_, _) => Transform.rotate(
                   angle: _ringCtrl.value * 2 * math.pi,
                   child: CustomPaint(
                     size: const Size(120, 120),
