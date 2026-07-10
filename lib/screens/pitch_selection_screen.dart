@@ -9,6 +9,7 @@ import '../services/game_websocket_service.dart';
 import '../services/match_service.dart';
 import '../services/token_storage.dart';
 import '../widgets/mode_background.dart';
+import 'pitcher_game_screen.dart';
 
 // ─── Phase state machine ──────────────────────────────────────────────────────
 
@@ -53,6 +54,9 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
   /// 멀리건 응답 대기용 Completer
   Completer<CardHandEvent>? _mulliganCompleter;
   bool _isConfirming = false;
+
+  /// allMulliganReady 수신 시 내비게이션에 사용할 마지막 카드 이벤트
+  CardHandEvent? _latestHandEvent;
 
   // ── Animation controllers ─────────────────────────────────────────────────
 
@@ -141,15 +145,39 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
 
   void _handleCardHandEvent(CardHandEvent event) {
     if (!mounted) return;
+    _latestHandEvent = event;
     if (event.fromMulligan) {
       _mulliganCompleter?.complete(event);
+      if (event.allMulliganReady) {
+        _navigateToGameScreen(event);
+      }
     } else {
       _onInitialDeal(event.cardInfos);
     }
   }
 
   void _handleAllReady(bool allReady) {
-    // TODO: 양측 멀리건 완료 시 게임 플레이 화면으로 전환
+    if (!mounted || _latestHandEvent == null) return;
+    _navigateToGameScreen(_latestHandEvent!);
+  }
+
+  void _navigateToGameScreen(CardHandEvent event) {
+    if (!mounted) return;
+    final isPitcher = _currentUserId == event.pitcherUserId;
+
+    Navigator.of(context).pushReplacement(PageRouteBuilder(
+      pageBuilder: (_, _a, _b) => isPitcher
+          ? PitcherGameScreen(
+              gameMode: widget.gameMode,
+              matchSessionId: widget.matchSessionId,
+              setupNumbers: widget.setupNumbers,
+              handCards: event.cardInfos,
+            )
+          : _BatterPlaceholder(gameMode: widget.gameMode), // TODO: BatterGameScreen
+      transitionsBuilder: (_, anim, _c, child) =>
+          FadeTransition(opacity: anim, child: child),
+      transitionDuration: const Duration(milliseconds: 400),
+    ));
   }
 
   void _onInitialDeal(List<CardInfo> cards) {
@@ -287,34 +315,21 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
     if (mounted) setState(() => _phase = _Phase.idle);
   }
 
-  Future<void> _onConfirm() async {
+  void _onConfirm() {
     if (_phase != _Phase.idle || _isConfirming) return;
     setState(() => _isConfirming = true);
 
-    _mulliganCompleter = Completer<CardHandEvent>();
     final sent = _ws.sendMulligan(
       matchSessionId: widget.matchSessionId,
       cardIdsToSwap: const [],
     );
 
     if (!sent) {
-      _mulliganCompleter = null;
-      if (mounted) {
-        setState(() => _isConfirming = false);
-        _showSnackBar('서버 전송 실패. 다시 시도해주세요.', isError: true);
-      }
+      setState(() => _isConfirming = false);
+      _showSnackBar('서버 전송 실패. 다시 시도해주세요.', isError: true);
       return;
     }
-
-    try {
-      // 서버의 allMulliganReady 응답 대기
-      await _mulliganCompleter!.future.timeout(const Duration(seconds: 15));
-    } catch (_) {
-      if (mounted) _showSnackBar('응답 시간 초과.', isError: true);
-    }
-    _mulliganCompleter = null;
-    if (mounted) setState(() => _isConfirming = false);
-    // TODO: allMulliganReady 수신 시 게임플레이 화면으로 이동
+    // 이후 _handleCardHandEvent / _handleAllReady에서 allMulliganReady=true 수신 시 화면 전환
   }
 
   void _showSnackBar(String message, {bool isError = false}) {
@@ -930,7 +945,7 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
           // ── 확정 버튼 ────────────────────────────────────────────────
           Expanded(
             child: GestureDetector(
-              onTap: canConfirm ? _onConfirm : null,
+              onTap: (canConfirm && !_isConfirming) ? _onConfirm : null,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 220),
                 height: 54,
@@ -1286,6 +1301,39 @@ class _SmallCardWidget extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+// ─── Batter placeholder (TODO: BatterGameScreen 구현 후 교체) ─────────────────
+
+class _BatterPlaceholder extends StatelessWidget {
+  final GameMode gameMode;
+  const _BatterPlaceholder({required this.gameMode});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.light,
+      child: Scaffold(
+        body: Stack(children: [
+          ModeBackground(mode: gameMode),
+          const SafeArea(
+            child: Center(
+              child: Text(
+                '타자 화면\n(준비 중)',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
+                  shadows: [Shadow(blurRadius: 10, color: Colors.black87)],
+                ),
+              ),
+            ),
+          ),
+        ]),
+      ),
     );
   }
 }

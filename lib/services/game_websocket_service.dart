@@ -3,6 +3,7 @@ import 'package:stomp_dart_client/stomp_dart_client.dart';
 import '../core/api_client.dart';
 import '../models/card_hand_event.dart';
 import '../models/mulligan_request.dart';
+import '../models/pitcher_card_select_request.dart';
 import '../models/setup_number_request.dart';
 
 const _kStompPath = '/ws/websocket';
@@ -144,6 +145,30 @@ class GameWebSocketService {
     final req = MulliganRequest(cardIdsToSwap: cardIdsToSwap);
     _client!.send(
       destination: '/app/game/$matchSessionId/cards/mulligan',
+      body: req.toJsonString(),
+      headers: {'content-type': 'application/json'},
+    );
+    return true;
+  }
+
+  // ── Phase 4: 투수 카드 선택 ───────────────────────────────────────────────
+
+  /// 투수의 구종 카드 + 시작 좌표 카드를 서버에 전송합니다.
+  ///
+  /// [pitchCardId]   : 선택한 구종 카드 ID (CardInfo.cardId)
+  /// [coordinateCardId] : 선택한 좌표 카드 ID (CoordinateCard.id)
+  bool sendPitcherSelectCard({
+    required String matchSessionId,
+    required int pitchCardId,
+    required int coordinateCardId,
+  }) {
+    if (!isConnected) return false;
+    final req = PitcherCardSelectRequest(
+      pitchCardId: pitchCardId,
+      coordinateCardId: coordinateCardId,
+    );
+    _client!.send(
+      destination: '/app/game/$matchSessionId/pitcher/select-card',
       body: req.toJsonString(),
       headers: {'content-type': 'application/json'},
     );
