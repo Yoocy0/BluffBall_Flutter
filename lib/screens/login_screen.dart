@@ -1,10 +1,51 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import '../services/auth_service.dart';
 import '../widgets/game_background.dart';
 import '../widgets/bluffball_logo.dart';
+import 'home_screen.dart';
 
-class LoginScreen extends StatelessWidget {
+class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final _authService = AuthService();
+  bool _isLoading = false;
+
+  Future<void> _handleLogin(Future<void> Function() loginFn) async {
+    if (_isLoading) return;
+    setState(() => _isLoading = true);
+    try {
+      await loginFn();
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const HomeScreen()),
+        );
+      }
+    } on AuthException catch (e) {
+      if (mounted) _showError(e.message);
+    } catch (e) {
+      if (mounted) _showError('예상치 못한 오류가 발생했습니다.\n다시 시도해주세요.');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: const Color(0xFF8B0000),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.all(16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -39,6 +80,15 @@ class LoginScreen extends StatelessWidget {
             ),
           ),
 
+          // 로딩 오버레이
+          if (_isLoading)
+            Container(
+              color: Colors.black.withValues(alpha: 0.45),
+              child: const Center(
+                child: CircularProgressIndicator(color: Colors.white),
+              ),
+            ),
+
           // 콘텐츠
           SafeArea(
             child: Column(
@@ -58,18 +108,24 @@ class LoginScreen extends StatelessWidget {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        _SocialLoginButton.kakao(onPressed: () {
-                          // TODO: 카카오 로그인 구현
-                        }),
+                        _SocialLoginButton.kakao(
+                          onPressed: _isLoading
+                              ? null
+                              : () => _handleLogin(_authService.signInWithKakao),
+                        ),
                         const SizedBox(height: 12),
-                        _SocialLoginButton.google(onPressed: () {
-                          // TODO: 구글 로그인 구현
-                        }),
+                        _SocialLoginButton.google(
+                          onPressed: _isLoading
+                              ? null
+                              : () => _handleLogin(_authService.signInWithGoogle),
+                        ),
                         if (Platform.isIOS) ...[
                           const SizedBox(height: 12),
-                          _SocialLoginButton.apple(onPressed: () {
-                            // TODO: Apple 로그인 구현
-                          }),
+                          _SocialLoginButton.apple(
+                            onPressed: _isLoading
+                                ? null
+                                : () => _handleLogin(_authService.signInWithApple),
+                          ),
                         ],
                         const SizedBox(height: 16),
                         const Text(
@@ -110,7 +166,7 @@ enum _SocialType { kakao, google, apple }
 
 class _SocialLoginButton extends StatelessWidget {
   final _SocialType type;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   const _SocialLoginButton.kakao({required this.onPressed})
       : type = _SocialType.kakao;
