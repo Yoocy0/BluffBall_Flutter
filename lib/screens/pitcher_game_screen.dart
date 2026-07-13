@@ -6,11 +6,11 @@ import '../models/card_info.dart';
 import '../models/coordinate_card.dart';
 import '../models/game_mode.dart';
 import '../models/turn_result_event.dart';
+import '../services/game_flow_controller.dart';
 import '../services/game_websocket_service.dart';
 import '../services/token_storage.dart';
 import '../widgets/match_info_overlay.dart';
 import '../widgets/mode_background.dart';
-import 'turn_result_screen.dart';
 
 // ─── Setup category colors ────────────────────────────────────────────────────
 
@@ -47,7 +47,8 @@ class PitcherGameScreen extends StatefulWidget {
   State<PitcherGameScreen> createState() => _PitcherGameScreenState();
 }
 
-class _PitcherGameScreenState extends State<PitcherGameScreen> {
+class _PitcherGameScreenState extends State<PitcherGameScreen>
+    with WidgetsBindingObserver {
   // ── Coordinate cards ──────────────────────────────────────────────────────
   List<CoordinateCard> _coordCards = [];
   bool _loadingCoords = true;
@@ -68,39 +69,42 @@ class _PitcherGameScreenState extends State<PitcherGameScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _lastResult = widget.lastResultEvent;
+    GameFlowController.instance.updateSession(GameSessionContext(
+      gameMode: widget.gameMode,
+      matchSessionId: widget.matchSessionId,
+      setupNumbers: widget.setupNumbers,
+      currentUserId: widget.currentUserId,
+      initialPitcherUserId: widget.initialPitcherUserId,
+      handCards: widget.handCards,
+    ));
+    _subscribeGameTopic();
+    _ws.refreshResultTopicSubscription(widget.matchSessionId);
     _fetchCoordinateCards();
-    _subscribeResultTopic();
   }
 
   @override
   void dispose() {
-    _ws.unsubscribeResultTopic();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
-  void _subscribeResultTopic() {
-    _ws.subscribeResultTopic(
-      matchSessionId: widget.matchSessionId,
-      onResult: _onTurnResult,
-    );
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _ws.refreshConnectionAndSubscriptions();
+      GameFlowController.instance.refreshSubscriptions();
+    }
   }
 
-  void _onTurnResult(TurnResultEvent event) {
-    if (!mounted) return;
-    Navigator.of(context).pushReplacement(PageRouteBuilder(
-      pageBuilder: (ctx, anim1, anim2) => TurnResultScreen(
-        gameMode: widget.gameMode,
-        matchSessionId: widget.matchSessionId,
-        event: event,
-        setupNumbers: widget.setupNumbers,
-        currentUserId: widget.currentUserId,
-        myHandCards: widget.handCards,
-      ),
-      transitionsBuilder: (ctx, anim, secAnim, child) =>
-          FadeTransition(opacity: anim, child: child),
-      transitionDuration: const Duration(milliseconds: 350),
-    ));
+  void _subscribeGameTopic() {
+    _ws.subscribeGameTopic(
+      matchSessionId: widget.matchSessionId,
+      currentUserId: widget.currentUserId,
+      onEvent: (_) {},
+      onAllReady: (_) {},
+    );
   }
 
   // ── Coordinate card prefetch ──────────────────────────────────────────────
@@ -188,30 +192,19 @@ class _PitcherGameScreenState extends State<PitcherGameScreen> {
           ModeBackground(mode: widget.gameMode),
           SafeArea(
             child: Column(children: [
-              // ── 상단: 헤더+셋업(좌) / 오버레이(우) ─────────────────────
-              IntrinsicHeight(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildHeader(),
-                          if (widget.setupNumbers.isNotEmpty)
-                            _buildSetupSummary(),
-                        ],
-                      ),
-                    ),
-                    MatchInfoOverlay(
-                      currentUserId: widget.currentUserId,
-                      initialPitcherUserId: widget.initialPitcherUserId,
-                      lastResult: _lastResult,
-                    ),
-                  ],
-                ),
+              // ── 상단: 헤더(좌) + 스코어보드(우) ───────────────────────────
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: _buildHeader()),
+                  MatchInfoOverlay(
+                    currentUserId: widget.currentUserId,
+                    initialPitcherUserId: widget.initialPitcherUserId,
+                    lastResult: _lastResult,
+                  ),
+                ],
               ),
-              // ── 나머지 컨텐츠 ────────────────────────────────────────────
+              if (widget.setupNumbers.isNotEmpty) _buildSetupSummary(),
               _buildPitchDisplay(),
               Expanded(child: _buildCoordGridArea()),
               _buildHandArea(),
@@ -277,12 +270,12 @@ class _PitcherGameScreenState extends State<PitcherGameScreen> {
 
   Widget _buildHeader() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 14, 12, 0),
+      padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
       child: Row(children: [
         const Text(
           '투구',
           style: TextStyle(
-            color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800,
+            color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800,
             letterSpacing: 0.5, shadows: [Shadow(blurRadius: 10, color: Colors.black87)],
           ),
         ),
@@ -304,7 +297,7 @@ class _PitcherGameScreenState extends State<PitcherGameScreen> {
 
   Widget _buildSetupSummary() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 5, 12, 6),
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 2),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
@@ -338,8 +331,8 @@ class _PitcherGameScreenState extends State<PitcherGameScreen> {
   Widget _buildPitchDisplay() {
     final has = _selectedCard != null || _selectedCoord != null;
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
         color: has ? Colors.black.withValues(alpha: 0.50) : Colors.black.withValues(alpha: 0.25),
         borderRadius: BorderRadius.circular(12),
@@ -399,54 +392,114 @@ class _PitcherGameScreenState extends State<PitcherGameScreen> {
         TextButton(onPressed: _fetchCoordinateCards, child: const Text('다시 시도', style: TextStyle(color: Colors.white))),
       ]));
     }
+    // 투수는 좌표 1~25만 (폭투존 0 제외)
+    final cells = _coordCards.where((c) => c.coordinateNumber >= 1).toList()
+      ..sort((a, b) => a.coordinateNumber.compareTo(b.coordinateNumber));
+
+    const hPad = 10.0;
+    const gap  = 4.0;
+    const cols = 5;
+    const rows = 5;
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
-      child: GridView.builder(
-        physics: const NeverScrollableScrollPhysics(),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 5, crossAxisSpacing: 5, mainAxisSpacing: 5),
-        itemCount: _coordCards.length,
-        itemBuilder: (_, i) => _buildCoordCell(_coordCards[i]),
-      ),
+      padding: const EdgeInsets.fromLTRB(hPad, 6, hPad, 4),
+      // LayoutBuilder로 가용 공간을 정확히 측정해 셀 비율 계산
+      child: LayoutBuilder(builder: (context, constraints) {
+        final cellW = (constraints.maxWidth  - gap * (cols - 1)) / cols;
+        final cellH = (constraints.maxHeight - gap * (rows - 1)) / rows;
+        final aspect = cellW / cellH; // 실제 비율 → 스크롤 없이 5×5가 꼭 맞게 들어감
+
+        return GridView.builder(
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: cols,
+            crossAxisSpacing: gap,
+            mainAxisSpacing: gap,
+            childAspectRatio: aspect > 0 ? aspect : 3 / 4,
+          ),
+          itemCount: cells.length,
+          itemBuilder: (_, i) => _buildCoordCell(cells[i]),
+        );
+      }),
     );
   }
 
   Widget _buildCoordCell(CoordinateCard coord) {
-    final isStrike = coord.isStrike;
-    final isSelected = _selectedCoord?.id == coord.id;
+    final isStrike  = coord.isStrike;
+    final isSelected = _selectedCoord?.id == coord.id && _selectedCoord != null;
+
+    // 색상 팔레트
+    const strikeBase  = Color(0xFF00C853); // 스트라이크 존 — 진한 초록
+    const ballBase    = Color(0xFF37474F); // 볼 존 — 어두운 청회색
+    const selectedCol = Color(0xFFFFD700); // 선택됨 — 골드
+
     return DragTarget<CardInfo>(
       onWillAcceptWithDetails: (_) => true,
       onAcceptWithDetails: (d) => _onCardDropped(d.data, coord),
       builder: (ctx, candidates, rejected) {
         final hover = candidates.isNotEmpty;
+        final bgColor = isSelected
+            ? selectedCol.withValues(alpha: 0.30)
+            : hover
+                ? Colors.white.withValues(alpha: 0.25)
+                : isStrike
+                    ? strikeBase.withValues(alpha: 0.22) // 스트라이크 존: 더 짙게
+                    : ballBase.withValues(alpha: 0.35);  // 볼 존: 어두운 색
+
+        final borderColor = isSelected
+            ? selectedCol
+            : hover
+                ? Colors.white.withValues(alpha: 0.70)
+                : isStrike
+                    ? strikeBase.withValues(alpha: 0.65)
+                    : ballBase.withValues(alpha: 0.45);
+
+        final textColor = isSelected
+            ? selectedCol
+            : isStrike
+                ? strikeBase.withValues(alpha: 0.95)
+                : Colors.white.withValues(alpha: 0.55);
+
         return GestureDetector(
           onTap: () => _onCoordTap(coord),
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
+            duration: const Duration(milliseconds: 110),
             decoration: BoxDecoration(
-              color: isSelected ? const Color(0xFFFFD700).withValues(alpha: 0.28)
-                  : hover ? Colors.white.withValues(alpha: 0.28)
-                  : isStrike ? const Color(0xFF7CFC00).withValues(alpha: 0.10)
-                  : Colors.white.withValues(alpha: 0.05),
-              borderRadius: BorderRadius.circular(7),
-              border: Border.all(
-                color: isSelected ? const Color(0xFFFFD700)
-                    : hover ? Colors.white.withValues(alpha: 0.70)
-                    : isStrike ? const Color(0xFF7CFC00).withValues(alpha: 0.45)
-                    : Colors.white.withValues(alpha: 0.15),
-                width: isSelected ? 1.8 : 1.0,
-              ),
-              boxShadow: isSelected ? [BoxShadow(color: const Color(0xFFFFD700).withValues(alpha: 0.35), blurRadius: 8, spreadRadius: 1)] : null,
+              color: bgColor,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: borderColor, width: isSelected ? 1.8 : 1.0),
+              boxShadow: isSelected
+                  ? [BoxShadow(color: selectedCol.withValues(alpha: 0.40), blurRadius: 8, spreadRadius: 1)]
+                  : isStrike
+                      ? [BoxShadow(color: strikeBase.withValues(alpha: 0.18), blurRadius: 4)]
+                      : null,
             ),
-            child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Text('${coord.coordinateNumber}', style: TextStyle(
-                color: isSelected ? const Color(0xFFFFD700)
-                    : isStrike ? const Color(0xFF7CFC00)
-                    : Colors.white.withValues(alpha: _selectedCard != null ? 0.85 : 0.40),
-                fontSize: 13, fontWeight: isSelected ? FontWeight.w900 : FontWeight.w600,
-              )),
-              if (isStrike && !isSelected) Container(width: 4, height: 4, margin: const EdgeInsets.only(top: 2),
-                decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFF7CFC00))),
-            ])),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  '${coord.coordinateNumber}',
+                  style: TextStyle(
+                    color: textColor,
+                    fontSize: 11,
+                    fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700,
+                    height: 1,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  isStrike ? 'S' : 'B',
+                  style: TextStyle(
+                    color: isStrike
+                        ? strikeBase.withValues(alpha: isSelected ? 0.90 : 0.75)
+                        : Colors.white.withValues(alpha: 0.25),
+                    fontSize: 7,
+                    fontWeight: FontWeight.w800,
+                    height: 1,
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },

@@ -8,11 +8,11 @@ import '../models/coordinate_card.dart';
 import '../models/game_mode.dart';
 import '../models/pitcher_ready_event.dart';
 import '../models/turn_result_event.dart';
+import '../services/game_flow_controller.dart';
 import '../services/game_websocket_service.dart';
 import '../services/token_storage.dart';
 import '../widgets/match_info_overlay.dart';
 import '../widgets/mode_background.dart';
-import 'turn_result_screen.dart';
 
 // ─── Timing slots ─────────────────────────────────────────────────────────────
 
@@ -71,7 +71,7 @@ class BatterGameScreen extends StatefulWidget {
 enum _BatterPhase { waiting, active, submitted }
 
 class _BatterGameScreenState extends State<BatterGameScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   // ── Coordinate cards ──────────────────────────────────────────────────────
   List<CoordinateCard> _coordCards = [];
   bool _loadingCoords = true;
@@ -103,51 +103,43 @@ class _BatterGameScreenState extends State<BatterGameScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _pulseCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 600),
     )..repeat(reverse: true);
 
     _lastResult = widget.lastResultEvent;
+    GameFlowController.instance.updateSession(GameSessionContext(
+      gameMode: widget.gameMode,
+      matchSessionId: widget.matchSessionId,
+      setupNumbers: widget.setupNumbers,
+      currentUserId: widget.currentUserId,
+      initialPitcherUserId: widget.initialPitcherUserId,
+      handCards: widget.handCards,
+    ));
     _fetchCoordinateCards();
     _subscribeToGameTopic();
-    _subscribeResultTopic();
+    _ws.refreshResultTopicSubscription(widget.matchSessionId);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _countdownTimer?.cancel();
     _pulseCtrl.dispose();
-    _ws.unsubscribeResultTopic();
     super.dispose();
   }
 
-  void _subscribeResultTopic() {
-    _ws.subscribeResultTopic(
-      matchSessionId: widget.matchSessionId,
-      onResult: _onTurnResult,
-    );
-  }
-
-  void _onTurnResult(TurnResultEvent event) {
-    if (!mounted) return;
-    _countdownTimer?.cancel();
-    Navigator.of(context).pushReplacement(PageRouteBuilder(
-      pageBuilder: (ctx, anim1, anim2) => TurnResultScreen(
-        gameMode: widget.gameMode,
-        matchSessionId: widget.matchSessionId,
-        event: event,
-        setupNumbers: widget.setupNumbers,
-        currentUserId: widget.currentUserId,
-        myHandCards: widget.handCards,
-      ),
-      transitionsBuilder: (ctx, anim, secAnim, child) =>
-          FadeTransition(opacity: anim, child: child),
-      transitionDuration: const Duration(milliseconds: 350),
-    ));
-  }
-
   // ── WebSocket subscription ────────────────────────────────────────────────
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _ws.refreshConnectionAndSubscriptions();
+      GameFlowController.instance.refreshSubscriptions();
+    }
+  }
 
   void _subscribeToGameTopic() {
     // widget.currentUserId는 PitchSelectionScreen에서 전달받은 값
@@ -283,7 +275,6 @@ class _BatterGameScreenState extends State<BatterGameScreen>
         backgroundColor: Colors.red,
       ));
     }
-    // TODO: 턴 결과 이벤트 수신 시 결과 화면으로 이동
   }
 
   // ── Build ──────────────────────────────────────────────────────────────────
@@ -297,30 +288,18 @@ class _BatterGameScreenState extends State<BatterGameScreen>
           ModeBackground(mode: widget.gameMode),
           SafeArea(
             child: Column(children: [
-              // ── 상단: 헤더+셋업(좌) / 오버레이(우) ─────────────────────
-              IntrinsicHeight(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildHeader(),
-                          if (widget.setupNumbers.isNotEmpty)
-                            _buildSetupSummary(),
-                        ],
-                      ),
-                    ),
-                    MatchInfoOverlay(
-                      currentUserId: widget.currentUserId,
-                      initialPitcherUserId: widget.initialPitcherUserId,
-                      lastResult: _lastResult,
-                    ),
-                  ],
-                ),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: _buildHeader()),
+                  MatchInfoOverlay(
+                    currentUserId: widget.currentUserId,
+                    initialPitcherUserId: widget.initialPitcherUserId,
+                    lastResult: _lastResult,
+                  ),
+                ],
               ),
-              // ── 나머지 컨텐츠 ────────────────────────────────────────────
+              if (widget.setupNumbers.isNotEmpty) _buildSetupSummary(),
               _buildPitcherInfoBar(),
               _buildSelectionDisplay(),
               _buildTimerBar(),
@@ -341,13 +320,13 @@ class _BatterGameScreenState extends State<BatterGameScreen>
 
   Widget _buildHeader() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 14, 12, 0),
+      padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
       child: Row(children: [
         const Text(
           '타격',
           style: TextStyle(
             color: Colors.white,
-            fontSize: 20,
+            fontSize: 16,
             fontWeight: FontWeight.w800,
             letterSpacing: 0.5,
             shadows: [Shadow(blurRadius: 10, color: Colors.black87)],
@@ -378,7 +357,7 @@ class _BatterGameScreenState extends State<BatterGameScreen>
 
   Widget _buildSetupSummary() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 5, 12, 6),
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 2),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
@@ -680,31 +659,45 @@ class _BatterGameScreenState extends State<BatterGameScreen>
     final zeroCard = _coordCards
         .where((c) => c.coordinateNumber == 0)
         .firstOrNull;
-    final mainCards =
-        _coordCards.where((c) => c.coordinateNumber > 0).toList();
+    final mainCards = _coordCards
+        .where((c) => c.coordinateNumber > 0)
+        .toList()
+      ..sort((a, b) => a.coordinateNumber.compareTo(b.coordinateNumber));
+
+    const hPad = 10.0;
+    const gap = 4.0;
+    const cols = 5;
+    const rows = 5;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      padding: const EdgeInsets.fromLTRB(hPad, 4, hPad, 2),
       child: Column(
         children: [
-          // 폭투존 (0번) — 전체 너비 특수 셀
           if (zeroCard != null)
             Padding(
-              padding: const EdgeInsets.only(bottom: 5),
+              padding: const EdgeInsets.only(bottom: 4),
               child: _buildWildCell(zeroCard),
             ),
-          // 5x5 메인 그리드
           Expanded(
-            child: GridView.builder(
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 5,
-                crossAxisSpacing: 5,
-                mainAxisSpacing: 5,
-              ),
-              itemCount: mainCards.length,
-              itemBuilder: (_, i) => _buildCoordCell(mainCards[i]),
-            ),
+            child: LayoutBuilder(builder: (context, constraints) {
+              final cellW =
+                  (constraints.maxWidth - gap * (cols - 1)) / cols;
+              final cellH =
+                  (constraints.maxHeight - gap * (rows - 1)) / rows;
+              final aspect = cellW / cellH;
+
+              return GridView.builder(
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: cols,
+                  crossAxisSpacing: gap,
+                  mainAxisSpacing: gap,
+                  childAspectRatio: aspect > 0 ? aspect : 3 / 4,
+                ),
+                itemCount: mainCards.length,
+                itemBuilder: (_, i) => _buildCoordCell(mainCards[i]),
+              );
+            }),
           ),
         ],
       ),

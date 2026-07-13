@@ -13,9 +13,14 @@ class CoordinateCard {
   });
 
   factory CoordinateCard.fromJson(Map<String, dynamic> json) => CoordinateCard(
-        id: (json['id'] as num?)?.toInt() ?? 0,
+        // 백엔드 응답 필드명: cardId, coordinateNumber, name, strike
+        id: (json['cardId'] as num?)?.toInt() ??
+            (json['id'] as num?)?.toInt() ??
+            0,
         coordinateNumber: (json['coordinateNumber'] as num?)?.toInt() ?? 0,
         name: (json['name'] as String?) ?? '',
-        isStrike: (json['isStrike'] as bool?) ?? false,
+        isStrike: (json['strike'] as bool?) ??
+            (json['isStrike'] as bool?) ??
+            false,
       );
 }

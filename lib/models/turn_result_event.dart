@@ -42,29 +42,73 @@ class TurnResultEvent {
     required this.gameOver,
   });
 
+  static const _turnResultsByOrdinal = [
+    'STRIKE',
+    'BALL',
+    'SINGLE',
+    'DOUBLE',
+    'TRIPLE',
+    'HOMERUN',
+    'WALK',
+    'STRIKE_OUT',
+    'OUT',
+    'DOUBLE_PLAY',
+    'WILD_PITCH',
+  ];
+
+  static String _enumName(dynamic value, {String fallback = ''}) {
+    if (value == null) return fallback;
+    if (value is String) return value;
+    if (value is num) {
+      final i = value.toInt();
+      if (i >= 0 && i < _turnResultsByOrdinal.length) {
+        return _turnResultsByOrdinal[i];
+      }
+    }
+    if (value is Map) {
+      final name = value['name'];
+      if (name is String) return name;
+    }
+    return value.toString();
+  }
+
+  static int _int(dynamic value, {int fallback = 0}) {
+    if (value == null) return fallback;
+    if (value is num) return value.toInt();
+    return int.tryParse(value.toString()) ?? fallback;
+  }
+
+  static bool _bool(dynamic value, {bool fallback = false}) {
+    if (value == null) return fallback;
+    if (value is bool) return value;
+    return fallback;
+  }
+
+  static List<int> _diceList(dynamic value) {
+    if (value is! List) return const [];
+    return value.map((e) => (e as num).toInt()).toList();
+  }
+
   factory TurnResultEvent.fromJson(Map<String, dynamic> json) =>
       TurnResultEvent(
-        turnResult: json['turnResult'] as String,
-        finalCoordinateNumber:
-            (json['finalCoordinateNumber'] as num).toInt(),
-        pitchTiming: json['pitchTiming'] as String,
-        pitchCardName: json['pitchCardName'] as String,
-        diceResults: (json['diceResults'] as List<dynamic>)
-            .map((e) => (e as num).toInt())
-            .toList(),
-        inning: (json['inning'] as num).toInt(),
-        isTop: json['isTop'] as bool,
-        homeScore: (json['homeScore'] as num).toInt(),
-        awayScore: (json['awayScore'] as num).toInt(),
-        balls: (json['balls'] as num).toInt(),
-        strikes: (json['strikes'] as num).toInt(),
-        outs: (json['outs'] as num).toInt(),
-        firstBase: json['firstBase'] as bool,
-        secondBase: json['secondBase'] as bool,
-        thirdBase: json['thirdBase'] as bool,
-        pitcherUserId: (json['pitcherUserId'] as num).toInt(),
-        halfInningChanged: json['halfInningChanged'] as bool,
-        gameOver: json['gameOver'] as bool,
+        turnResult: _enumName(json['turnResult']),
+        finalCoordinateNumber: _int(json['finalCoordinateNumber']),
+        pitchTiming: _enumName(json['pitchTiming']),
+        pitchCardName: (json['pitchCardName'] as String?) ?? '',
+        diceResults: _diceList(json['diceResults']),
+        inning: _int(json['inning'], fallback: 1),
+        isTop: _bool(json['isTop'] ?? json['top'], fallback: true),
+        homeScore: _int(json['homeScore']),
+        awayScore: _int(json['awayScore']),
+        balls: _int(json['balls']),
+        strikes: _int(json['strikes']),
+        outs: _int(json['outs']),
+        firstBase: _bool(json['firstBase']),
+        secondBase: _bool(json['secondBase']),
+        thirdBase: _bool(json['thirdBase']),
+        pitcherUserId: _int(json['pitcherUserId']),
+        halfInningChanged: _bool(json['halfInningChanged']),
+        gameOver: _bool(json['gameOver']),
       );
 
   // ── 결과 분류 ──────────────────────────────────────────────────────────────

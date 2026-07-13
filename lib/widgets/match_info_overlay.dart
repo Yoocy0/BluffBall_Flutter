@@ -1,14 +1,11 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../models/turn_result_event.dart';
 
-/// 우상단 경기 정보 오버레이.
+/// 우상단 경기 정보 스코어보드 (컴팩트).
 ///
-/// 이닝, B-S-O 카운트, 주자, 스코어, 현재 투수/타자 userId를 표시합니다.
-/// [lastResult] 가 null 이면 초기값(1회 초, 0-0, 0:0)으로 표시합니다.
-///
-/// B: 최대 3 (4번째면 볼넷 처리됨)
-/// S: 최대 2 (3번째면 삼진)
-/// O: 최대 2 (3번째면 이닝 종료)
+/// [AWAY/HOME + 점수] | [이닝+▲▼ / 볼-스트] | [◇베이스 + ●○아웃]
+/// P 투수명(1줄)
 class MatchInfoOverlay extends StatelessWidget {
   final TurnResultEvent? lastResult;
   final int currentUserId;
@@ -25,173 +22,266 @@ class MatchInfoOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     final ev = lastResult;
 
-    final inning       = ev?.inning ?? 1;
-    final isTop        = ev?.isTop ?? true;
-    final homeScore    = ev?.homeScore ?? 0;
-    final awayScore    = ev?.awayScore ?? 0;
-    final balls        = (ev?.balls ?? 0).clamp(0, 3);
-    final strikes      = (ev?.strikes ?? 0).clamp(0, 2);
-    final outs         = (ev?.outs ?? 0).clamp(0, 2);
-    final first        = ev?.firstBase ?? false;
-    final second       = ev?.secondBase ?? false;
-    final third        = ev?.thirdBase ?? false;
+    final inning = ev?.inning ?? 1;
+    final isTop = ev?.isTop ?? true;
+    final awayScore = ev?.awayScore ?? 0;
+    final homeScore = ev?.homeScore ?? 0;
+    final balls = (ev?.balls ?? 0).clamp(0, 3);
+    final strikes = (ev?.strikes ?? 0).clamp(0, 2);
+    final outs = (ev?.outs ?? 0).clamp(0, 2);
+    final first = ev?.firstBase ?? false;
+    final second = ev?.secondBase ?? false;
+    final third = ev?.thirdBase ?? false;
     final pitcherUserId = ev?.pitcherUserId ?? initialPitcherUserId;
-    final amIPitcher   = pitcherUserId == currentUserId;
 
     return Container(
-      width: 158,
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.88),
-        borderRadius: const BorderRadius.only(
-          bottomLeft: Radius.circular(14),
-        ),
+        color: Colors.black.withValues(alpha: 0.72),
+        borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(8)),
         border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
       ),
-      padding: const EdgeInsets.fromLTRB(10, 7, 10, 9),
+      padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── 이닝 + 스코어 ─────────────────────────────────────────
-          Row(children: [
-            Text(
-              '$inning회 ${isTop ? '초' : '말'}',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.3,
-              ),
+          IntrinsicHeight(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildScores(awayScore, homeScore),
+                _vDiv(),
+                _buildInningAndCount(inning, isTop, balls, strikes),
+                _vDiv(),
+                _buildBasesAndOuts(first, second, third, outs),
+              ],
             ),
-            const Spacer(),
-            Text(
-              '$homeScore : $awayScore',
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.80),
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ]),
-          const SizedBox(height: 6),
-
-          // ── B · S · O ─────────────────────────────────────────────
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _countDots('B', balls,   3, const Color(0xFF64B5F6)),
-              _countDots('S', strikes, 2, const Color(0xFFFFD740)),
-              _countDots('O', outs,    2, const Color(0xFFFF5252)),
-            ],
-          ),
-          const SizedBox(height: 7),
-
-          // ── 주자 ──────────────────────────────────────────────────
-          Row(children: [
-            Text(
-              '주자',
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.40),
-                fontSize: 9,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(width: 8),
-            _BaseDiamond(first: first, second: second, third: third),
-          ]),
-          const SizedBox(height: 6),
-
-          Divider(color: Colors.white.withValues(alpha: 0.10), height: 1),
-          const SizedBox(height: 6),
-
-          // ── 투수 / 타자 ───────────────────────────────────────────
-          _roleRow(
-            label: '투수',
-            isMe: amIPitcher,
-            color: const Color(0xFFFF7043),
           ),
           const SizedBox(height: 3),
-          _roleRow(
-            label: '타자',
-            isMe: !amIPitcher,
-            color: const Color(0xFF42A5F5),
+          Divider(height: 1, color: Colors.white.withValues(alpha: 0.10)),
+          const SizedBox(height: 3),
+          _buildPitcherLine(pitcherUserId),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScores(int awayScore, int homeScore) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _teamScoreRow('AWAY', awayScore),
+        const SizedBox(height: 2),
+        _teamScoreRow('HOME', homeScore),
+      ],
+    );
+  }
+
+  Widget _teamScoreRow(String label, int score) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(3),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.65),
+              fontSize: 7,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.2,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '$score',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+              height: 1,
+            ),
           ),
         ],
       ),
     );
   }
 
-  // ── helpers ──────────────────────────────────────────────────────────────
-
-  Widget _countDots(String label, int count, int max, Color color) {
-    return Row(
+  Widget _buildInningAndCount(int inning, bool isTop, int balls, int strikes) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          label,
-          style: TextStyle(
-            color: color.withValues(alpha: 0.75),
-            fontSize: 9,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        const SizedBox(width: 4),
         Row(
-          children: List.generate(max, (i) => Container(
-            width: 8,
-            height: 8,
-            margin: const EdgeInsets.only(right: 2),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: i < count ? color : color.withValues(alpha: 0.15),
-              boxShadow: i < count
-                  ? [BoxShadow(color: color.withValues(alpha: 0.45), blurRadius: 4)]
-                  : null,
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Text(
+              '$inning',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w900,
+                height: 1,
+              ),
             ),
-          )),
+            const SizedBox(width: 2),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _inningTriangle(up: true, active: isTop),
+                const SizedBox(height: 1),
+                _inningTriangle(up: false, active: !isTop),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(
+          '$balls-$strikes',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.70),
+            fontSize: 9,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.3,
+            height: 1,
+          ),
         ),
       ],
     );
   }
 
-  Widget _roleRow({
-    required String label,
-    required bool isMe,
-    required Color color,
-  }) {
-    return Row(children: [
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.18),
-          borderRadius: BorderRadius.circular(4),
+  Widget _inningTriangle({required bool up, required bool active}) {
+    return CustomPaint(
+      size: const Size(7, 5),
+      painter: _TrianglePainter(
+        up: up,
+        color: active
+            ? const Color(0xFFFF1744)
+            : Colors.white.withValues(alpha: 0.20),
+      ),
+    );
+  }
+
+  Widget _buildBasesAndOuts(
+    bool first,
+    bool second,
+    bool third,
+    int outs,
+  ) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _ScoreboardBases(first: first, second: second, third: third),
+        const SizedBox(height: 3),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _outCircle(outs >= 1),
+            const SizedBox(width: 3),
+            _outCircle(outs >= 2),
+          ],
         ),
-        child: Text(
-          label,
-          style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w800),
+      ],
+    );
+  }
+
+  Widget _outCircle(bool filled) {
+    return Container(
+      width: 9,
+      height: 9,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: filled ? const Color(0xFFFF1744) : Colors.transparent,
+        border: Border.all(
+          color: filled
+              ? const Color(0xFFFF1744)
+              : Colors.white.withValues(alpha: 0.35),
+          width: 1.2,
         ),
       ),
-      const SizedBox(width: 6),
-      Text(
-        isMe ? '나' : '상대',
-        style: TextStyle(
-          color: isMe ? Colors.white : Colors.white.withValues(alpha: 0.50),
-          fontSize: 10,
-          fontWeight: isMe ? FontWeight.w700 : FontWeight.w500,
+    );
+  }
+
+  Widget _buildPitcherLine(int pitcherUserId) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text(
+          'P',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 9,
+            fontWeight: FontWeight.w900,
+          ),
         ),
+        const SizedBox(width: 4),
+        Text(
+          'User$pitcherUserId',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.75),
+            fontSize: 9,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _vDiv() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      child: VerticalDivider(
+        width: 1,
+        thickness: 1,
+        color: Colors.white.withValues(alpha: 0.10),
       ),
-    ]);
+    );
   }
 }
 
-// ─── Base diamond widget ──────────────────────────────────────────────────────
+class _TrianglePainter extends CustomPainter {
+  final bool up;
+  final Color color;
 
-class _BaseDiamond extends StatelessWidget {
+  _TrianglePainter({required this.up, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color;
+    final path = Path();
+    if (up) {
+      path.moveTo(size.width / 2, 0);
+      path.lineTo(size.width, size.height);
+      path.lineTo(0, size.height);
+    } else {
+      path.moveTo(0, 0);
+      path.lineTo(size.width, 0);
+      path.lineTo(size.width / 2, size.height);
+    }
+    path.close();
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _TrianglePainter oldDelegate) =>
+      oldDelegate.up != up || oldDelegate.color != color;
+}
+
+class _ScoreboardBases extends StatelessWidget {
   final bool first;
   final bool second;
   final bool third;
 
-  const _BaseDiamond({
+  const _ScoreboardBases({
     required this.first,
     required this.second,
     required this.third,
@@ -199,49 +289,45 @@ class _BaseDiamond extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const size = 10.0;
-    const gap  = 3.0;
-    const on   = Color(0xFFFFD740);
-    const off  = Colors.white24;
+    const size = 7.0;
+    const gap = 2.0;
 
     return SizedBox(
-      width: size * 3 + gap * 2 + 4,
+      width: size * 3 + gap * 2 + 2,
       height: size * 2 + gap + 2,
       child: Stack(children: [
-        // 2루 (위 중앙)
         Positioned(
           top: 0,
           left: size + gap,
-          child: _dot(second, size, on, off),
+          child: _baseDot(second, size),
         ),
-        // 3루 (아래 좌)
         Positioned(
           bottom: 0,
           left: 0,
-          child: _dot(third, size, on, off),
+          child: _baseDot(third, size),
         ),
-        // 1루 (아래 우)
         Positioned(
           bottom: 0,
           right: 0,
-          child: _dot(first, size, on, off),
+          child: _baseDot(first, size),
         ),
       ]),
     );
   }
 
-  Widget _dot(bool occ, double size, Color on, Color off) => Transform.rotate(
-        angle: 0.785, // 45°
-        child: Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            color: occ ? on : off,
-            borderRadius: BorderRadius.circular(2),
-            boxShadow: occ
-                ? [BoxShadow(color: on.withValues(alpha: 0.60), blurRadius: 5)]
-                : null,
-          ),
+  Widget _baseDot(bool occupied, double size) {
+    const on = Color(0xFFFFD700);
+    const off = Color(0xFF455A64);
+    return Transform.rotate(
+      angle: math.pi / 4,
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: occupied ? on : off,
+          borderRadius: BorderRadius.circular(1.5),
         ),
-      );
+      ),
+    );
+  }
 }

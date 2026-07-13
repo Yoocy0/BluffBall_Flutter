@@ -4,12 +4,10 @@ import 'package:flutter/services.dart';
 import '../models/card_info.dart';
 import '../models/game_mode.dart';
 import '../models/turn_result_event.dart';
+import '../navigation/app_navigator.dart';
+import '../services/game_flow_controller.dart';
 import '../widgets/dice_widget.dart';
 import '../widgets/mode_background.dart';
-import 'batter_game_screen.dart';
-import 'game_over_screen.dart';
-import 'pitch_selection_screen.dart';
-import 'pitcher_game_screen.dart';
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
@@ -109,74 +107,15 @@ class _TurnResultScreenState extends State<TurnResultScreen>
     _autoNavTimer?.cancel();
     _countdownDisplay?.cancel();
 
-    final ev = widget.event;
+    final nav = rootNavigatorKey.currentState ?? Navigator.of(context);
+    final ctx = GameFlowController.instance.session;
+    if (ctx == null) return;
 
-    // 게임 종료
-    if (ev.gameOver) {
-      final isHomeTeam = ev.isTop == (ev.pitcherUserId == widget.currentUserId);
-      final myScore = isHomeTeam ? ev.homeScore : ev.awayScore;
-      final opponentScore = isHomeTeam ? ev.awayScore : ev.homeScore;
-
-      Navigator.of(context).pushReplacement(MaterialPageRoute(
-        builder: (_) => GameOverScreen(
-          gameMode: widget.gameMode,
-          myScore: myScore,
-          opponentScore: opponentScore,
-          didWin: myScore > opponentScore,
-        ),
-      ));
-      return;
-    }
-
-    // 공수 교대 → 구종 선택(멀리건)부터 다시
-    if (ev.halfInningChanged) {
-      Navigator.of(context).pushReplacement(PageRouteBuilder(
-        pageBuilder: (ctx, anim1, anim2) => PitchSelectionScreen(
-          gameMode: widget.gameMode,
-          matchSessionId: widget.matchSessionId,
-          setupNumbers: widget.setupNumbers,
-        ),
-        transitionsBuilder: (ctx, anim, secAnim, child) =>
-            FadeTransition(opacity: anim, child: child),
-        transitionDuration: const Duration(milliseconds: 400),
-      ));
-      return;
-    }
-
-    // 같은 이닝 다음 턴 — 역할 결정
-    final amIPitcher = ev.pitcherUserId == widget.currentUserId;
-
-    if (amIPitcher) {
-      Navigator.of(context).pushReplacement(PageRouteBuilder(
-        pageBuilder: (ctx, anim1, anim2) => PitcherGameScreen(
-          gameMode: widget.gameMode,
-          matchSessionId: widget.matchSessionId,
-          setupNumbers: widget.setupNumbers,
-          handCards: widget.myHandCards,
-          currentUserId: widget.currentUserId,
-          initialPitcherUserId: ev.pitcherUserId,
-          lastResultEvent: ev,
-        ),
-        transitionsBuilder: (ctx, anim, secAnim, child) =>
-            FadeTransition(opacity: anim, child: child),
-        transitionDuration: const Duration(milliseconds: 400),
-      ));
-    } else {
-      Navigator.of(context).pushReplacement(PageRouteBuilder(
-        pageBuilder: (ctx, anim1, anim2) => BatterGameScreen(
-          gameMode: widget.gameMode,
-          matchSessionId: widget.matchSessionId,
-          setupNumbers: widget.setupNumbers,
-          handCards: widget.myHandCards,
-          currentUserId: widget.currentUserId,
-          initialPitcherUserId: ev.pitcherUserId,
-          lastResultEvent: ev,
-        ),
-        transitionsBuilder: (ctx, anim, secAnim, child) =>
-            FadeTransition(opacity: anim, child: child),
-        transitionDuration: const Duration(milliseconds: 400),
-      ));
-    }
+    GameFlowController.instance.navigateAfterResultCountdown(
+      nav,
+      ctx,
+      widget.event,
+    );
   }
 
   // ── Build ──────────────────────────────────────────────────────────────────

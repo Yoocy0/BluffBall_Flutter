@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import '../models/card_hand_event.dart';
 import '../models/card_info.dart';
 import '../models/game_mode.dart';
+import '../services/game_flow_controller.dart';
 import '../services/game_websocket_service.dart';
 import '../services/match_service.dart';
 import '../services/token_storage.dart';
@@ -59,6 +60,8 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
   /// allMulliganReady 수신 시 내비게이션에 사용할 마지막 카드 이벤트
   CardHandEvent? _latestHandEvent;
 
+  bool _navigatedToGame = false;
+
   // ── Animation controllers ─────────────────────────────────────────────────
 
   late AnimationController _dealCtrl;
@@ -106,6 +109,7 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
 
     final userIdStr = MatchService.extractUserIdFromJwt(token);
     _currentUserId = userIdStr != null ? int.tryParse(userIdStr) : null;
+    _registerGameSession();
 
     // ignore: avoid_print
     print('[PitchScreen] userId from JWT: "$userIdStr" → int: $_currentUserId');
@@ -134,6 +138,18 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
     }
   }
 
+  void _registerGameSession({List<CardInfo>? handCards, int? pitcherUserId}) {
+    if (_currentUserId == null) return;
+    GameFlowController.instance.registerSession(GameSessionContext(
+      gameMode: widget.gameMode,
+      matchSessionId: widget.matchSessionId,
+      setupNumbers: widget.setupNumbers,
+      currentUserId: _currentUserId!,
+      initialPitcherUserId: pitcherUserId ?? _currentUserId!,
+      handCards: handCards ?? const [],
+    ));
+  }
+
   void _subscribeToGameTopic() {
     if (_currentUserId == null) return;
     _ws.subscribeGameTopic(
@@ -142,6 +158,16 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
       onEvent: _handleCardHandEvent,
       onAllReady: _handleAllReady,
     );
+    _consumeBufferedCardHandIfAny();
+  }
+
+  void _consumeBufferedCardHandIfAny() {
+    if (_currentUserId == null) return;
+    final buffered = _ws.takeBufferedCardHand(_currentUserId!);
+    if (buffered == null) return;
+    // ignore: avoid_print
+    print('[PitchScreen] 버퍼된 CardHandEvent 복구 (targetUserId=${buffered.targetUserId})');
+    _handleCardHandEvent(buffered);
   }
 
   void _handleCardHandEvent(CardHandEvent event) {
@@ -158,14 +184,20 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
   }
 
   void _handleAllReady(bool allReady) {
-    if (!mounted || _latestHandEvent == null) return;
+    if (!allReady || !mounted || _latestHandEvent == null) return;
     _navigateToGameScreen(_latestHandEvent!);
   }
 
   void _navigateToGameScreen(CardHandEvent event) {
-    if (!mounted) return;
-    final isPitcher = _currentUserId == event.pitcherUserId;
+    if (!mounted || _navigatedToGame) return;
+    _navigatedToGame = true;
 
+    _registerGameSession(
+      handCards: event.cardInfos,
+      pitcherUserId: event.pitcherUserId,
+    );
+
+    final isPitcher = _currentUserId == event.pitcherUserId;
     Navigator.of(context).pushReplacement(PageRouteBuilder(
       pageBuilder: (_, _a, _b) => isPitcher
           ? PitcherGameScreen(

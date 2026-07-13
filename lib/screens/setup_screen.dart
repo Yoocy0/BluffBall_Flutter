@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import '../models/game_mode.dart';
 import '../models/setup_number_request.dart';
 import '../services/game_websocket_service.dart';
+import '../services/match_service.dart';
 import '../services/token_storage.dart';
 import 'pitch_selection_screen.dart';
 
@@ -93,12 +94,32 @@ class _SetupScreenState extends State<SetupScreen> {
       accessToken: token,
       onConnected: () {
         if (mounted) setState(() => _wsStatus = WsStatus.connected);
+        _subscribeGameTopicEarly(token);
       },
       onError: (msg) {
         if (mounted) setState(() => _wsStatus = WsStatus.error);
         _showSnackBar('WebSocket 연결 실패: $msg', isError: true);
       },
     );
+  }
+
+  Future<void> _subscribeGameTopicEarly(String token) async {
+    final sessionId = widget.matchSessionId;
+    if (sessionId == null || sessionId.isEmpty) return;
+
+    final userIdStr = MatchService.extractUserIdFromJwt(token);
+    final userId = userIdStr != null ? int.tryParse(userIdStr) : null;
+    if (userId == null) return;
+
+    // ignore: avoid_print
+    print('[SetupScreen] 게임 토픽 선구독 (CardHandEvent 버퍼용) userId=$userId');
+    _ws.subscribeGameTopic(
+      matchSessionId: sessionId,
+      currentUserId: userId,
+      onEvent: (_) {},
+      onAllReady: (_) {},
+    );
+    _ws.ensureResultTopicSubscription(sessionId);
   }
 
   @override

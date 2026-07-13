@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:kakao_flutter_sdk_auth/kakao_flutter_sdk_auth.dart';
 
+import 'navigation/app_navigator.dart';
 import 'screens/landing_screen.dart';
 
 const _kakaoNativeAppKey = '2def6584659ee97c1e077fc441a58480';
@@ -20,6 +21,7 @@ class BluffBallApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: rootNavigatorKey,
       title: 'BluffBall',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(

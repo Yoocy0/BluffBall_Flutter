@@ -8,6 +8,7 @@ import '../models/pitcher_card_select_request.dart';
 import '../models/pitcher_ready_event.dart';
 import '../models/setup_number_request.dart';
 import '../models/turn_result_event.dart';
+import 'game_flow_controller.dart';
 
 const _kStompPath = '/ws/websocket';
 
@@ -31,6 +32,20 @@ class GameWebSocketService {
   StompClient? _client;
   StompUnsubscribe? _gameTopicUnsub;
   StompUnsubscribe? _resultTopicUnsub;
+  String? _resultMatchSessionId;
+  String? _gameTopicMatchSessionId;
+  int? _gameTopicUserId;
+  String? _lastAccessToken;
+  void Function()? _onConnectedCallback;
+  void Function(String message)? _onErrorCallback;
+
+  /// 구독 전 도착한 CardHandEvent (away 등 늦게 PitchSelection 진입 시 복구용)
+  final Map<int, CardHandEvent> _cardHandBuffer = {};
+
+  // 게임 토픽 콜백 (화면 전환 후에도 유지)
+  void Function(CardHandEvent event)? _onCardHand;
+  void Function(bool allReady)? _onAllMulliganReady;
+  void Function(PitcherReadyEvent event)? _onPitcherReady;
 
   bool get isConnected => _client?.connected ?? false;
 
@@ -41,6 +56,17 @@ class GameWebSocketService {
     required void Function() onConnected,
     required void Function(String message) onError,
   }) {
+    _lastAccessToken = accessToken;
+    _onConnectedCallback = onConnected;
+    _onErrorCallback = onError;
+
+    // 재연결 시 이전 STOMP 구독 핸들은 무효 — 토픽 ID는 유지하고 onConnect에서 재구독
+    _gameTopicUnsub?.call();
+    _gameTopicUnsub = null;
+    _resultTopicUnsub?.call();
+    _resultTopicUnsub = null;
+    _client?.deactivate();
+
     final url = '${ApiClient.wsBaseUrl}$_kStompPath';
 
     _client = StompClient(
@@ -56,14 +82,60 @@ class GameWebSocketService {
         },
         connectionTimeout: const Duration(seconds: 10),
         reconnectDelay: Duration.zero,
-        onConnect: (_) => onConnected(),
-        onDisconnect: (_) {},
-        onStompError: (frame) =>
-            onError(frame.body?.isNotEmpty == true ? frame.body! : 'STOMP 오류'),
-        onWebSocketError: (error) => onError('연결 오류: $error'),
+        onConnect: (_) {
+          _onConnectedCallback?.call();
+          _resubscribeTopicsAfterConnect();
+        },
+        onDisconnect: (_) {
+          _gameTopicUnsub = null;
+          _resultTopicUnsub = null;
+        },
+        onStompError: (frame) => _onErrorCallback?.call(
+          frame.body?.isNotEmpty == true ? frame.body! : 'STOMP 오류',
+        ),
+        onWebSocketError: (error) =>
+            _onErrorCallback?.call('연결 오류: $error'),
       ),
     );
     _client!.activate();
+  }
+
+  /// 앱 복귀 등 — 연결·구독 상태를 다시 맞춥니다.
+  void refreshConnectionAndSubscriptions() {
+    if (_lastAccessToken == null) return;
+    if (isConnected) {
+      _resubscribeTopicsAfterConnect();
+      return;
+    }
+    connect(
+      accessToken: _lastAccessToken!,
+      onConnected: _onConnectedCallback ?? () {},
+      onError: _onErrorCallback ?? (_) {},
+    );
+  }
+
+  void _resubscribeTopicsAfterConnect() {
+    final gameId = _gameTopicMatchSessionId;
+    final userId = _gameTopicUserId;
+    if (gameId != null &&
+        userId != null &&
+        _onCardHand != null &&
+        _onAllMulliganReady != null) {
+      _gameTopicUnsub = null;
+      subscribeGameTopic(
+        matchSessionId: gameId,
+        currentUserId: userId,
+        onEvent: _onCardHand!,
+        onAllReady: _onAllMulliganReady!,
+        onPitcherReady: _onPitcherReady,
+      );
+    }
+
+    final resultId =
+        _resultMatchSessionId ?? GameFlowController.instance.session?.matchSessionId;
+    if (resultId != null && resultId.isNotEmpty) {
+      refreshResultTopicSubscription(resultId);
+    }
   }
 
   // ── Phase 2: 셋업 숫자 ────────────────────────────────────────────────────
@@ -83,15 +155,13 @@ class GameWebSocketService {
 
   // ── Phase 3: 카드 구독 ────────────────────────────────────────────────────
 
-  /// 게임 토픽을 구독해 [CardHandEvent]를 수신합니다.
+  /// 버퍼에 저장된 CardHandEvent를 꺼냅니다 (없으면 null).
+  CardHandEvent? takeBufferedCardHand(int userId) =>
+      _cardHandBuffer.remove(userId);
+
+  /// 게임 토픽 STOMP 구독 + 콜백 등록.
   ///
-  /// 이미 구독 중이면 기존 구독을 해제하고 재구독합니다.
-  /// [currentUserId]와 이벤트의 targetUserId가 일치하는 메시지만 [onEvent]로 전달합니다.
-  /// 게임 토픽을 구독해 여러 이벤트 타입을 수신합니다.
-  ///
-  /// - [onEvent]        : CardHandEvent (구종 카드 배분/멀리건)
-  /// - [onAllReady]     : 양측 멀리건 완료 신호
-  /// - [onPitcherReady] : PitcherReadyEvent (투수 투구 완료 → 타자 5초 타이머 시작)
+  /// 같은 [matchSessionId]면 STOMP 재구독 없이 콜백만 갱신합니다.
   void subscribeGameTopic({
     required String matchSessionId,
     required int currentUserId,
@@ -99,7 +169,18 @@ class GameWebSocketService {
     required void Function(bool allReady) onAllReady,
     void Function(PitcherReadyEvent event)? onPitcherReady,
   }) {
+    _onCardHand = onEvent;
+    _onAllMulliganReady = onAllReady;
+    _onPitcherReady = onPitcherReady;
+    _gameTopicUserId = currentUserId;
+
+    if (_gameTopicUnsub != null &&
+        _gameTopicMatchSessionId == matchSessionId) {
+      return;
+    }
+
     _gameTopicUnsub?.call();
+    _gameTopicMatchSessionId = matchSessionId;
 
     final destination = '$_kGameTopic$matchSessionId';
     // ignore: avoid_print
@@ -107,53 +188,78 @@ class GameWebSocketService {
 
     _gameTopicUnsub = _client?.subscribe(
       destination: destination,
-      callback: (frame) {
-        final body = frame.body;
-        // ignore: avoid_print
-        print('[WS] 수신 raw: $body');
-        if (body == null || body.isEmpty) return;
-        try {
-          final json = jsonDecode(body) as Map<String, dynamic>;
-
-          // ── 이벤트 타입 판별 ─────────────────────────────────────────────────
-          if (json.containsKey('startCoordinateNumber')) {
-            // PitcherReadyEvent
-            final event = PitcherReadyEvent.fromJson(json);
-            // ignore: avoid_print
-            print('[WS] PitcherReadyEvent → startCoord=${event.startCoordinateNumber}');
-            onPitcherReady?.call(event);
-          } else if (json.containsKey('cards')) {
-            // CardHandEvent
-            final event = CardHandEvent.fromJson(json);
-            // ignore: avoid_print
-            print('[WS] CardHandEvent → targetUserId=${event.targetUserId}'
-                ' fromMulligan=${event.fromMulligan}'
-                ' allReady=${event.allMulliganReady}'
-                ' cards=${event.cardInfos.length}장');
-            if (event.targetUserId == currentUserId) {
-              onEvent(event);
-              if (event.allMulliganReady) {
-                onAllReady(true);
-              }
-            } else {
-              // ignore: avoid_print
-              print('[WS] ⚠️ userId 불일치: 수신=${event.targetUserId} / 내 userId=$currentUserId');
-            }
-          } else {
-            // ignore: avoid_print
-            print('[WS] 알 수 없는 이벤트 타입: $json');
-          }
-        } catch (e) {
-          // ignore: avoid_print
-          print('[WS] ⚠️ 파싱 오류: $e / body=$body');
-        }
-      },
+      callback: _handleGameTopicFrame,
     );
+  }
+
+  void _handleGameTopicFrame(StompFrame frame) {
+    final body = frame.body;
+    // ignore: avoid_print
+    print('[WS] 수신 raw: $body');
+    if (body == null || body.isEmpty) return;
+
+    final userId = _gameTopicUserId;
+    if (userId == null) return;
+
+    try {
+      final json = jsonDecode(body) as Map<String, dynamic>;
+
+      if (json.containsKey('startCoordinateNumber')) {
+        final event = PitcherReadyEvent.fromJson(json);
+        // ignore: avoid_print
+        print('[WS] PitcherReadyEvent → startCoord=${event.startCoordinateNumber}');
+        _onPitcherReady?.call(event);
+        return;
+      }
+
+      if (json.containsKey('cards')) {
+        final event = CardHandEvent.fromJson(json);
+        // ignore: avoid_print
+        print('[WS] CardHandEvent → targetUserId=${event.targetUserId}'
+            ' fromMulligan=${event.fromMulligan}'
+            ' allReady=${event.allMulliganReady}'
+            ' cards=${event.cardInfos.length}장');
+
+        _cardHandBuffer[event.targetUserId] = event;
+
+        if (event.targetUserId == userId) {
+          _onCardHand?.call(event);
+          if (event.allMulliganReady) {
+            _onAllMulliganReady?.call(true);
+          }
+        } else {
+          // ignore: avoid_print
+          print('[WS] ⚠️ userId 불일치: 수신=${event.targetUserId} / 내 userId=$userId');
+        }
+        return;
+      }
+
+      // RoleChangedEvent (공수 교대 — 멀리건/드로우 없음)
+      if (json.containsKey('pitcherUserId') &&
+          !json.containsKey('turnResult')) {
+        final pitcherId = (json['pitcherUserId'] as num).toInt();
+        // ignore: avoid_print
+        print('[WS] RoleChangedEvent → pitcherUserId=$pitcherId');
+        GameFlowController.instance.onRoleChanged(pitcherId);
+        return;
+      }
+
+      // ignore: avoid_print
+      print('[WS] 알 수 없는 이벤트 타입: $json');
+    } catch (e) {
+      // ignore: avoid_print
+      print('[WS] ⚠️ 파싱 오류: $e / body=$body');
+    }
   }
 
   void unsubscribeGameTopic() {
     _gameTopicUnsub?.call();
     _gameTopicUnsub = null;
+    _gameTopicMatchSessionId = null;
+    _gameTopicUserId = null;
+    _onCardHand = null;
+    _onAllMulliganReady = null;
+    _onPitcherReady = null;
   }
 
   // ── Phase 3: 멀리건 ───────────────────────────────────────────────────────
@@ -226,18 +332,24 @@ class GameWebSocketService {
 
   // ── 결과 토픽 구독 (/topic/game/{id}/result) ──────────────────────────────
 
-  /// 턴 결과 이벤트 구독.
-  ///
-  /// 이미 구독 중이면 기존 구독을 해제하고 재구독합니다.
-  void subscribeResultTopic({
-    required String matchSessionId,
-    required void Function(TurnResultEvent event) onResult,
-  }) {
+  /// 결과 토픽 STOMP 구독을 보장합니다 (매치당 1회).
+  void ensureResultTopicSubscription(String matchSessionId) {
+    _resultMatchSessionId = matchSessionId;
+    if (!isConnected) {
+      // ignore: avoid_print
+      print('[WS] ⚠️ ensureResultTopicSubscription: WS 미연결 (pending=$matchSessionId)');
+      return;
+    }
+    if (_resultTopicUnsub != null &&
+        _resultMatchSessionId == matchSessionId) {
+      return;
+    }
+
     _resultTopicUnsub?.call();
 
-    final destination = '${_kGameTopic}$matchSessionId/result';
+    final destination = '$_kGameTopic$matchSessionId/result';
     // ignore: avoid_print
-    print('[WS] subscribeResultTopic → $destination');
+    print('[WS] ensureResultTopicSubscription → $destination');
 
     _resultTopicUnsub = _client?.subscribe(
       destination: destination,
@@ -251,18 +363,31 @@ class GameWebSocketService {
           final event = TurnResultEvent.fromJson(json);
           // ignore: avoid_print
           print('[WS] TurnResultEvent → ${event.turnResult} 주사위=${event.diceResults}');
-          onResult(event);
-        } catch (e) {
+          GameFlowController.instance.onTurnResult(event);
+        } catch (e, st) {
           // ignore: avoid_print
-          print('[WS] ⚠️ 결과 파싱 오류: $e / body=$body');
+          print('[WS] ⚠️ 결과 파싱 오류: $e / body=$body\n$st');
         }
       },
     );
+
+    if (_resultTopicUnsub == null) {
+      // ignore: avoid_print
+      print('[WS] ⚠️ 결과 토픽 구독 실패 (client=${_client != null})');
+    }
+  }
+
+  /// 재연결 후 stale 구독을 피하기 위해 결과 토픽을 강제 재구독합니다.
+  void refreshResultTopicSubscription(String matchSessionId) {
+    _resultTopicUnsub?.call();
+    _resultTopicUnsub = null;
+    ensureResultTopicSubscription(matchSessionId);
   }
 
   void unsubscribeResultTopic() {
     _resultTopicUnsub?.call();
     _resultTopicUnsub = null;
+    _resultMatchSessionId = null;
   }
 
   // ── disconnect ────────────────────────────────────────────────────────────
@@ -270,8 +395,19 @@ class GameWebSocketService {
   void disconnect() {
     _gameTopicUnsub?.call();
     _gameTopicUnsub = null;
+    _gameTopicMatchSessionId = null;
+    _gameTopicUserId = null;
+    _onCardHand = null;
+    _onAllMulliganReady = null;
+    _onPitcherReady = null;
+    _cardHandBuffer.clear();
     _resultTopicUnsub?.call();
     _resultTopicUnsub = null;
+    _resultMatchSessionId = null;
+    GameFlowController.instance.clearSession();
+    _lastAccessToken = null;
+    _onConnectedCallback = null;
+    _onErrorCallback = null;
     _client?.deactivate();
     _client = null;
   }
