@@ -7,6 +7,7 @@ import 'package:stomp_dart_client/stomp_dart_client.dart';
 import '../core/api_client.dart';
 import '../services/match_service.dart';
 import '../services/token_storage.dart';
+import '../widgets/board_game_box.dart';
 import 'match_found_screen.dart';
 import '../models/game_mode.dart';
 
@@ -33,13 +34,12 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
   StompClient? _stompClient;
   bool _isCancelling = false;
 
-  late final AnimationController _floatCtrl;
-  late final Animation<double> _floatY;
-  late final Animation<double> _shadowScale;
-
   late final AnimationController _dotsCtrl;
   late final AnimationController _pulseCtrl;
   late final Animation<double> _pulseAnim;
+  late final AnimationController _entryCtrl;
+  late final Animation<double> _entryFade;
+  late final Animation<Offset> _entrySlide;
 
   @override
   void initState() {
@@ -49,16 +49,6 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() => _seconds++);
     });
-
-    // 캐릭터 플로팅
-    _floatCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2200),
-    )..repeat(reverse: true);
-    _floatY = Tween<double>(begin: -8, end: 8).animate(
-        CurvedAnimation(parent: _floatCtrl, curve: Curves.easeInOut));
-    _shadowScale = Tween<double>(begin: 0.85, end: 1.15).animate(
-        CurvedAnimation(parent: _floatCtrl, curve: Curves.easeInOut));
 
     // 세 점 애니메이션
     _dotsCtrl = AnimationController(
@@ -73,6 +63,22 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
     )..repeat(reverse: true);
     _pulseAnim = Tween<double>(begin: 0.7, end: 1.0).animate(
         CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
+
+    _entryCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 480),
+    );
+    _entryFade = CurvedAnimation(
+      parent: _entryCtrl,
+      curve: const Interval(0.15, 1.0, curve: Curves.easeOut),
+    );
+    _entrySlide = Tween<Offset>(
+      begin: const Offset(0, 0.06),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _entryCtrl, curve: Curves.easeOutCubic));
+    Future.delayed(const Duration(milliseconds: 320), () {
+      if (mounted) _entryCtrl.forward();
+    });
 
     _initWebSocket();
   }
@@ -165,9 +171,9 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _stompClient?.deactivate();
-    _floatCtrl.dispose();
     _dotsCtrl.dispose();
     _pulseCtrl.dispose();
+    _entryCtrl.dispose();
     super.dispose();
   }
 
@@ -187,66 +193,35 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
           SizedBox.expand(child: CustomPaint(painter: _BgPainter())),
           SafeArea(
             child: Column(children: [
-              // 캐릭터
-              Expanded(child: _buildCharacter()),
-              // 탐색 인디케이터
-              _buildSearchingSection(),
-              const SizedBox(height: 36),
-              // 취소 버튼
-              _buildCancelButton(),
-              const SizedBox(height: 14),
-              // 타이머
-              _buildTimer(),
-              const SizedBox(height: 44),
+              // 보드게임 상자
+              Expanded(
+                child: BoardGameBox(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                  lockedPanelSize: BoardGameBoxLayout.mainPanelSize(context),
+                  heroTagOverride: BoardGameBox.heroTag,
+                ),
+              ),
+              FadeTransition(
+                opacity: _entryFade,
+                child: SlideTransition(
+                  position: _entrySlide,
+                  child: Column(
+                    children: [
+                      _buildSearchingSection(),
+                      const SizedBox(height: 36),
+                      _buildCancelButton(),
+                      const SizedBox(height: 14),
+                      _buildTimer(),
+                      const SizedBox(height: 44),
+                    ],
+                  ),
+                ),
+              ),
             ]),
           ),
         ]),
       ),
     );
-  }
-
-  // ── 캐릭터 (플로팅) ───────────────────────────────────────────────────────
-  Widget _buildCharacter() {
-    return LayoutBuilder(builder: (context, constraints) {
-      return AnimatedBuilder(
-        animation: _floatCtrl,
-        builder: (_, child) => Stack(
-          alignment: Alignment.bottomCenter,
-          children: [
-            Positioned(
-              top: 0, bottom: 16, left: 0, right: 0,
-              child: Transform.translate(
-                offset: Offset(0, _floatY.value), child: child,
-              ),
-            ),
-            Positioned(
-              bottom: 4,
-              child: Transform.scale(
-                scaleX: _shadowScale.value,
-                child: Container(
-                  width: constraints.maxWidth * 0.28,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(50),
-                    color: Colors.black.withValues(alpha: 0.42),
-                    boxShadow: [BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.3),
-                      blurRadius: 10, spreadRadius: 2,
-                    )],
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-        child: Image.asset(
-          'assets/images/character.png',
-          fit: BoxFit.contain,
-          alignment: Alignment.bottomCenter,
-          filterQuality: FilterQuality.high,
-        ),
-      );
-    });
   }
 
   // ── 탐색 중 텍스트 + 점 ──────────────────────────────────────────────────
