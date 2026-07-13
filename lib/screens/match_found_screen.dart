@@ -4,11 +4,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'setup_screen.dart';
+import '../models/game_mode.dart';
 
 class MatchFoundScreen extends StatefulWidget {
   final String? matchSessionId;
+  final GameMode gameMode;
 
-  const MatchFoundScreen({super.key, this.matchSessionId});
+  const MatchFoundScreen({
+    super.key,
+    this.matchSessionId,
+    this.gameMode = GameMode.single,
+  });
 
   @override
   State<MatchFoundScreen> createState() => _MatchFoundScreenState();
@@ -102,9 +108,11 @@ class _MatchFoundScreenState extends State<MatchFoundScreen>
   void _navigateToSetup() {
     if (!mounted) return;
     Navigator.of(context).pushReplacement(PageRouteBuilder(
-      pageBuilder: (_, _, _) =>
-          SetupScreen(matchSessionId: widget.matchSessionId),
-      transitionsBuilder: (_, anim, _, child) => FadeTransition(
+      pageBuilder: (_, __, ___) => SetupScreen(
+        gameMode: widget.gameMode,
+        matchSessionId: widget.matchSessionId,
+      ),
+      transitionsBuilder: (_, anim, __, child) => FadeTransition(
         opacity: anim,
         child: child,
       ),

@@ -8,9 +8,17 @@ import '../core/api_client.dart';
 import '../services/match_service.dart';
 import '../services/token_storage.dart';
 import 'match_found_screen.dart';
+import '../models/game_mode.dart';
 
 class MatchmakingScreen extends StatefulWidget {
-  const MatchmakingScreen({super.key});
+  final GameMode gameMode;
+  /// 실제 매칭 API 연결 시 서버에서 수신한 세션 ID로 교체
+  final String matchSessionId;
+  const MatchmakingScreen({
+    super.key,
+    this.gameMode = GameMode.single,
+    this.matchSessionId = '',
+  });
 
   @override
   State<MatchmakingScreen> createState() => _MatchmakingScreenState();
@@ -81,8 +89,14 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
       config: StompConfig(
         url: ApiClient.wsUrl,
         onConnect: _onStompConnect(userId),
-        stompConnectHeaders: {'Authorization': 'Bearer $token'},
-        webSocketConnectHeaders: {'Authorization': 'Bearer $token'},
+        stompConnectHeaders: {
+          'Authorization': 'Bearer $token',
+          'ngrok-skip-browser-warning': 'true',
+        },
+        webSocketConnectHeaders: {
+          'Authorization': 'Bearer $token',
+          'ngrok-skip-browser-warning': 'true',
+        },
         onWebSocketError: (dynamic error) =>
             // ignore: avoid_print
             print('[WS] 오류: $error'),
@@ -118,9 +132,11 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
     if (!mounted) return;
     _stompClient?.deactivate();
     Navigator.of(context).pushReplacement(PageRouteBuilder(
-      pageBuilder: (_, _, _) =>
-          MatchFoundScreen(matchSessionId: matchSessionId),
-      transitionsBuilder: (_, anim, _, child) =>
+      pageBuilder: (_, __, ___) => MatchFoundScreen(
+        matchSessionId: matchSessionId,
+        gameMode: widget.gameMode,
+      ),
+      transitionsBuilder: (_, anim, __, child) =>
           FadeTransition(opacity: anim, child: child),
       transitionDuration: const Duration(milliseconds: 400),
     ));

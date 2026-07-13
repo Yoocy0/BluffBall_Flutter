@@ -5,6 +5,7 @@ import '../services/match_service.dart';
 import 'login_screen.dart';
 import 'match_found_screen.dart';
 import 'matchmaking_screen.dart';
+import '../models/game_mode.dart';
 
 // ─── 색상 팔레트 ────────────────────────────────────────────────────────────
 const _kDarkBase = Color(0xFF161D0B);
@@ -450,8 +451,10 @@ class _HomeScreenState extends State<HomeScreen> {
       if (result.isMatched) {
         // 즉시 매칭 → 매칭 완료 화면으로 바로 이동
         Navigator.of(context).push(PageRouteBuilder(
-          pageBuilder: (_, __, ___) =>
-              MatchFoundScreen(matchSessionId: result.matchSessionId),
+          pageBuilder: (_, __, ___) => MatchFoundScreen(
+            matchSessionId: result.matchSessionId,
+            gameMode: GameMode.single,
+          ),
           transitionsBuilder: (_, anim, __, child) =>
               FadeTransition(opacity: anim, child: child),
           transitionDuration: const Duration(milliseconds: 350),
@@ -459,7 +462,7 @@ class _HomeScreenState extends State<HomeScreen> {
       } else {
         // 대기 중 → 매칭 대기 화면으로 이동 (WebSocket에서 알림 수신)
         Navigator.of(context).push(PageRouteBuilder(
-          pageBuilder: (_, __, ___) => const MatchmakingScreen(),
+          pageBuilder: (_, __, ___) => const MatchmakingScreen(gameMode: GameMode.single),
           transitionsBuilder: (_, anim, __, child) =>
               FadeTransition(opacity: anim, child: child),
           transitionDuration: const Duration(milliseconds: 350),
