@@ -5,14 +5,17 @@ import 'package:flutter/services.dart';
 import '../core/api_client.dart';
 import '../models/card_info.dart';
 import '../models/coordinate_card.dart';
+import '../models/double_judgment_config.dart';
 import '../models/game_mode.dart';
 import '../models/pitcher_ready_event.dart';
 import '../models/turn_result_event.dart';
 import '../services/game_flow_controller.dart';
+import '../services/game_match_meta_service.dart';
 import '../services/game_websocket_service.dart';
 import '../services/token_storage.dart';
 import '../widgets/match_info_overlay.dart';
 import '../widgets/mode_background.dart';
+import '../widgets/setup_numbers_summary.dart';
 
 // ─── Timing slots ─────────────────────────────────────────────────────────────
 
@@ -29,15 +32,6 @@ enum _Timing {
   const _Timing(this.label, this.requestValue, this.color);
 }
 
-// ─── Setup category colors ────────────────────────────────────────────────────
-
-const _kSetupColors = {
-  '아웃': Color(0xFF9E9E9E),
-  '병살': Color(0xFFBB66FF),
-  '3루타': Color(0xFF448AFF),
-  '홈런': Color(0xFFFF5252),
-};
-
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const _kTimerMax = 5.0; // seconds
@@ -49,6 +43,7 @@ class BatterGameScreen extends StatefulWidget {
   final GameMode gameMode;
   final String matchSessionId;
   final Map<String, List<int>> setupNumbers;
+  final DoubleJudgmentConfig? doubleJudgment;
   final List<CardInfo> handCards;
   final int currentUserId;
   final int initialPitcherUserId;
@@ -62,6 +57,7 @@ class BatterGameScreen extends StatefulWidget {
     required this.currentUserId,
     required this.initialPitcherUserId,
     this.setupNumbers = const {},
+    this.doubleJudgment,
     this.lastResultEvent,
   });
 
@@ -92,9 +88,11 @@ class _BatterGameScreenState extends State<BatterGameScreen>
   Timer? _countdownTimer;
 
   TurnResultEvent? _lastResult;
+  DoubleJudgmentConfig? _doubleJudgment;
 
   final _ws = GameWebSocketService.instance;
   final _tokenStorage = TokenStorage();
+  final _metaService = GameMatchMetaService();
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -104,14 +102,9 @@ class _BatterGameScreenState extends State<BatterGameScreen>
     WidgetsBinding.instance.addObserver(this);
 
     _lastResult = widget.lastResultEvent;
-    GameFlowController.instance.updateSession(GameSessionContext(
-      gameMode: widget.gameMode,
-      matchSessionId: widget.matchSessionId,
-      setupNumbers: widget.setupNumbers,
-      currentUserId: widget.currentUserId,
-      initialPitcherUserId: widget.initialPitcherUserId,
-      handCards: widget.handCards,
-    ));
+    _doubleJudgment = widget.doubleJudgment;
+    _syncSession();
+    if (_doubleJudgment == null) _loadDoubleJudgment();
     _fetchCoordinateCards();
     _subscribeToGameTopic();
     _ws.refreshResultTopicSubscription(widget.matchSessionId);
@@ -143,6 +136,26 @@ class _BatterGameScreenState extends State<BatterGameScreen>
       onAllReady: (_) {},
       onPitcherReady: _onPitcherReady,
     );
+  }
+
+  void _syncSession() {
+    GameFlowController.instance.updateSession(GameSessionContext(
+      gameMode: widget.gameMode,
+      matchSessionId: widget.matchSessionId,
+      setupNumbers: widget.setupNumbers,
+      doubleJudgment: _doubleJudgment,
+      currentUserId: widget.currentUserId,
+      initialPitcherUserId: widget.initialPitcherUserId,
+      handCards: widget.handCards,
+    ));
+  }
+
+  Future<void> _loadDoubleJudgment() async {
+    final config =
+        await _metaService.fetchDoubleJudgment(widget.matchSessionId);
+    if (!mounted || config == null) return;
+    setState(() => _doubleJudgment = config);
+    _syncSession();
   }
 
   void _onPitcherReady(PitcherReadyEvent event) {
@@ -310,7 +323,11 @@ class _BatterGameScreenState extends State<BatterGameScreen>
                   ),
                 ],
               ),
-              if (widget.setupNumbers.isNotEmpty) _buildSetupSummary(),
+              if (widget.setupNumbers.isNotEmpty || _doubleJudgment != null)
+                SetupNumbersSummaryBar(
+                  setupNumbers: widget.setupNumbers,
+                  doubleJudgment: _doubleJudgment,
+                ),
               _buildPitcherInfoBar(),
               _buildSelectionDisplay(),
               _buildTimerBar(),
@@ -360,49 +377,6 @@ class _BatterGameScreenState extends State<BatterGameScreen>
           ),
         ),
       ]),
-    );
-  }
-
-  // ── Setup summary ─────────────────────────────────────────────────────────
-
-  Widget _buildSetupSummary() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 2),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.40),
-          borderRadius: BorderRadius.circular(9),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.09)),
-        ),
-        child: Wrap(
-          spacing: 8,
-          runSpacing: 2,
-          children: widget.setupNumbers.entries.map((e) {
-            final color = _kSetupColors[e.key] ?? Colors.white;
-            return RichText(
-              text: TextSpan(children: [
-                TextSpan(
-                  text: '${e.key} ',
-                  style: TextStyle(
-                    color: color.withValues(alpha: 0.85),
-                    fontSize: 9,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                TextSpan(
-                  text: e.value.join('·'),
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.70),
-                    fontSize: 9,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ]),
-            );
-          }).toList(),
-        ),
-      ),
     );
   }
 
@@ -760,7 +734,7 @@ class _BatterGameScreenState extends State<BatterGameScreen>
               ),
               const SizedBox(width: 6),
               Text(
-                '0  ·  폭투 존  (탭 = 보통)',
+                '0  ·  폭투 존',
                 style: TextStyle(
                   color: isSelected
                       ? const Color(0xFFFF5252)

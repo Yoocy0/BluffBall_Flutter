@@ -10,8 +10,8 @@ import '../services/game_websocket_service.dart';
 import '../services/match_service.dart';
 import '../services/token_storage.dart';
 import '../widgets/mode_background.dart';
-import 'batter_game_screen.dart';
-import 'pitcher_game_screen.dart';
+import '../widgets/setup_numbers_summary.dart';
+import 'double_judgment_reveal_screen.dart';
 
 // ─── Phase state machine ──────────────────────────────────────────────────────
 
@@ -197,25 +197,15 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
       pitcherUserId: event.pitcherUserId,
     );
 
-    final isPitcher = _currentUserId == event.pitcherUserId;
     Navigator.of(context).pushReplacement(PageRouteBuilder(
-      pageBuilder: (_, _a, _b) => isPitcher
-          ? PitcherGameScreen(
-              gameMode: widget.gameMode,
-              matchSessionId: widget.matchSessionId,
-              setupNumbers: widget.setupNumbers,
-              handCards: event.cardInfos,
-              currentUserId: _currentUserId!,
-              initialPitcherUserId: event.pitcherUserId,
-            )
-          : BatterGameScreen(
-              gameMode: widget.gameMode,
-              matchSessionId: widget.matchSessionId,
-              setupNumbers: widget.setupNumbers,
-              handCards: event.cardInfos,
-              currentUserId: _currentUserId!,
-              initialPitcherUserId: event.pitcherUserId,
-            ),
+      pageBuilder: (_, _a, _b) => DoubleJudgmentRevealScreen(
+        gameMode: widget.gameMode,
+        matchSessionId: widget.matchSessionId,
+        setupNumbers: widget.setupNumbers,
+        handCards: event.cardInfos,
+        currentUserId: _currentUserId!,
+        pitcherUserId: event.pitcherUserId,
+      ),
       transitionsBuilder: (_, anim, _c, child) =>
           FadeTransition(opacity: anim, child: child),
       transitionDuration: const Duration(milliseconds: 400),
@@ -403,7 +393,14 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
           SafeArea(
             child: Column(children: [
               _buildHeader(),
-              if (widget.setupNumbers.isNotEmpty) _buildSetupSummary(),
+              if (widget.setupNumbers.isNotEmpty)
+                SetupNumbersSummaryBar(
+                  setupNumbers: widget.setupNumbers,
+                  margin: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                  fontSize: 10.5,
+                  showLockIcon: true,
+                ),
               Expanded(
                 child: _phase == _Phase.waiting
                     ? _buildWaitingState()
@@ -414,68 +411,6 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
             ]),
           ),
         ]),
-      ),
-    );
-  }
-
-  // ── Setup summary bar ─────────────────────────────────────────────────────
-
-  static const _kSetupColors = {
-    '아웃': Color(0xFF9E9E9E),
-    '병살': Color(0xFFBB66FF),
-    '3루타': Color(0xFF448AFF),
-    '홈런': Color(0xFFFF5252),
-  };
-
-  Widget _buildSetupSummary() {
-    final entries = widget.setupNumbers.entries.toList();
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 6),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.40),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.09)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.lock_outline_rounded,
-              size: 12, color: Colors.white.withValues(alpha: 0.35)),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Wrap(
-              spacing: 12,
-              runSpacing: 2,
-              children: entries.map((e) {
-                final color =
-                    _kSetupColors[e.key] ?? Colors.white;
-                final nums = e.value.join(' · ');
-                return RichText(
-                  text: TextSpan(
-                    children: [
-                      TextSpan(
-                        text: '${e.key} ',
-                        style: TextStyle(
-                          color: color.withValues(alpha: 0.85),
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      TextSpan(
-                        text: nums,
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.75),
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }).toList(),
-            ),
-          ),
-        ],
       ),
     );
   }

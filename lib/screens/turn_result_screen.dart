@@ -215,11 +215,11 @@ class _TurnResultScreenState extends State<TurnResultScreen>
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          _countItem('B', ev.balls, 4, const Color(0xFF64B5F6)),
+          _countItem('B', ev.balls, 2, const Color(0xFF64B5F6)),
           _countDivider(),
           _countItem('S', ev.strikes, 3, const Color(0xFFFFD740)),
           _countDivider(),
-          _countItem('O', ev.outs, 3, const Color(0xFFFF5252)),
+          _countItem('O', ev.outs, 2, const Color(0xFFFF5252)),
         ],
       ),
     );
