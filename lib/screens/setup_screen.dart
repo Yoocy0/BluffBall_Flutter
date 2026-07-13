@@ -157,8 +157,8 @@ class _SetupScreenState extends State<SetupScreen> {
         list.remove(number);
       } else if (list.length < _currentStep.quota) {
         list.add(number);
-        // 단일 슬롯 스텝은 선택 즉시 다음으로 이동
-        if (_currentStep.quota == 1) {
+        // 선택 완료 시 자동으로 다음 스텝으로 이동
+        if (list.length == _currentStep.quota) {
           final next = _currentStep.next;
           if (next != null) {
             Future.delayed(const Duration(milliseconds: 300), () {

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/card_info.dart';
+import '../models/double_judgment_config.dart';
 import '../models/game_mode.dart';
 import '../models/turn_result_event.dart';
 import '../navigation/app_navigator.dart';
@@ -14,6 +15,7 @@ class GameSessionContext {
   final GameMode gameMode;
   final String matchSessionId;
   final Map<String, List<int>> setupNumbers;
+  final DoubleJudgmentConfig? doubleJudgment;
   final int currentUserId;
   final int initialPitcherUserId;
   final List<CardInfo> handCards;
@@ -22,6 +24,7 @@ class GameSessionContext {
     required this.gameMode,
     required this.matchSessionId,
     required this.setupNumbers,
+    this.doubleJudgment,
     required this.currentUserId,
     required this.initialPitcherUserId,
     required this.handCards,
@@ -30,11 +33,13 @@ class GameSessionContext {
   GameSessionContext copyWith({
     int? initialPitcherUserId,
     List<CardInfo>? handCards,
+    DoubleJudgmentConfig? doubleJudgment,
   }) =>
       GameSessionContext(
         gameMode: gameMode,
         matchSessionId: matchSessionId,
         setupNumbers: setupNumbers,
+        doubleJudgment: doubleJudgment ?? this.doubleJudgment,
         currentUserId: currentUserId,
         initialPitcherUserId: initialPitcherUserId ?? this.initialPitcherUserId,
         handCards: handCards ?? this.handCards,
@@ -164,6 +169,7 @@ class GameFlowController {
           gameMode: ctx.gameMode,
           matchSessionId: ctx.matchSessionId,
           setupNumbers: ctx.setupNumbers,
+          doubleJudgment: ctx.doubleJudgment,
           handCards: ctx.handCards,
           currentUserId: ctx.currentUserId,
           initialPitcherUserId: ev.pitcherUserId,
@@ -179,6 +185,7 @@ class GameFlowController {
           gameMode: ctx.gameMode,
           matchSessionId: ctx.matchSessionId,
           setupNumbers: ctx.setupNumbers,
+          doubleJudgment: ctx.doubleJudgment,
           handCards: ctx.handCards,
           currentUserId: ctx.currentUserId,
           initialPitcherUserId: ev.pitcherUserId,

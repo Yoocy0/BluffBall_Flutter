@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/auth_service.dart';
 import '../services/match_service.dart';
+import '../widgets/board_game_box.dart';
 import 'login_screen.dart';
 import 'match_found_screen.dart';
 import 'matchmaking_screen.dart';
@@ -190,7 +191,7 @@ class _HomeScreenState extends State<HomeScreen> {
       case 0: return const _ShopScreen();
       case 1: return const _WardrobeScreen();
       case 3: return const _TeamPanel();
-      default: return const _AnimatedCharacter();
+      default: return const BoardGameBox(heroTagOverride: BoardGameBox.heroTag);
     }
   }
 
@@ -463,9 +464,15 @@ class _HomeScreenState extends State<HomeScreen> {
         // 대기 중 → 매칭 대기 화면으로 이동 (WebSocket에서 알림 수신)
         Navigator.of(context).push(PageRouteBuilder(
           pageBuilder: (_, __, ___) => const MatchmakingScreen(gameMode: GameMode.single),
-          transitionsBuilder: (_, anim, __, child) =>
-              FadeTransition(opacity: anim, child: child),
-          transitionDuration: const Duration(milliseconds: 350),
+          transitionDuration: const Duration(milliseconds: 650),
+          reverseTransitionDuration: const Duration(milliseconds: 500),
+          transitionsBuilder: (_, animation, __, child) => FadeTransition(
+            opacity: CurvedAnimation(
+              parent: animation,
+              curve: const Interval(0.35, 1.0, curve: Curves.easeOut),
+            ),
+            child: child,
+          ),
         ));
       }
     } on MatchException catch (e) {
@@ -1318,7 +1325,7 @@ class _BackgroundPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-// ─── 캐릭터 플로팅 애니메이션 ────────────────────────────────────────────────
+// ─── 캐릭터 (옷장 탭 전용) ────────────────────────────────────────────────────
 
 class _AnimatedCharacter extends StatefulWidget {
   const _AnimatedCharacter({super.key});

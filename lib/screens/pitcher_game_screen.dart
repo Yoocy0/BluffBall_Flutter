@@ -4,22 +4,16 @@ import 'package:flutter/services.dart';
 import '../core/api_client.dart';
 import '../models/card_info.dart';
 import '../models/coordinate_card.dart';
+import '../models/double_judgment_config.dart';
 import '../models/game_mode.dart';
 import '../models/turn_result_event.dart';
 import '../services/game_flow_controller.dart';
+import '../services/game_match_meta_service.dart';
 import '../services/game_websocket_service.dart';
 import '../services/token_storage.dart';
 import '../widgets/match_info_overlay.dart';
 import '../widgets/mode_background.dart';
-
-// ─── Setup category colors ────────────────────────────────────────────────────
-
-const _kSetupColors = {
-  '아웃': Color(0xFF9E9E9E),
-  '병살': Color(0xFFBB66FF),
-  '3루타': Color(0xFF448AFF),
-  '홈런': Color(0xFFFF5252),
-};
+import '../widgets/setup_numbers_summary.dart';
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
@@ -27,6 +21,7 @@ class PitcherGameScreen extends StatefulWidget {
   final GameMode gameMode;
   final String matchSessionId;
   final Map<String, List<int>> setupNumbers;
+  final DoubleJudgmentConfig? doubleJudgment;
   final List<CardInfo> handCards;
   final int currentUserId;
   final int initialPitcherUserId;
@@ -40,6 +35,7 @@ class PitcherGameScreen extends StatefulWidget {
     required this.currentUserId,
     required this.initialPitcherUserId,
     this.setupNumbers = const {},
+    this.doubleJudgment,
     this.lastResultEvent,
   });
 
@@ -62,23 +58,20 @@ class _PitcherGameScreenState extends State<PitcherGameScreen>
 
   // ── Match info ────────────────────────────────────────────────────────────
   TurnResultEvent? _lastResult;
+  DoubleJudgmentConfig? _doubleJudgment;
 
   final _ws = GameWebSocketService.instance;
   final _tokenStorage = TokenStorage();
+  final _metaService = GameMatchMetaService();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _lastResult = widget.lastResultEvent;
-    GameFlowController.instance.updateSession(GameSessionContext(
-      gameMode: widget.gameMode,
-      matchSessionId: widget.matchSessionId,
-      setupNumbers: widget.setupNumbers,
-      currentUserId: widget.currentUserId,
-      initialPitcherUserId: widget.initialPitcherUserId,
-      handCards: widget.handCards,
-    ));
+    _doubleJudgment = widget.doubleJudgment;
+    _syncSession();
+    if (_doubleJudgment == null) _loadDoubleJudgment();
     _subscribeGameTopic();
     _ws.refreshResultTopicSubscription(widget.matchSessionId);
     _fetchCoordinateCards();
@@ -105,6 +98,26 @@ class _PitcherGameScreenState extends State<PitcherGameScreen>
       onEvent: (_) {},
       onAllReady: (_) {},
     );
+  }
+
+  void _syncSession() {
+    GameFlowController.instance.updateSession(GameSessionContext(
+      gameMode: widget.gameMode,
+      matchSessionId: widget.matchSessionId,
+      setupNumbers: widget.setupNumbers,
+      doubleJudgment: _doubleJudgment,
+      currentUserId: widget.currentUserId,
+      initialPitcherUserId: widget.initialPitcherUserId,
+      handCards: widget.handCards,
+    ));
+  }
+
+  Future<void> _loadDoubleJudgment() async {
+    final config =
+        await _metaService.fetchDoubleJudgment(widget.matchSessionId);
+    if (!mounted || config == null) return;
+    setState(() => _doubleJudgment = config);
+    _syncSession();
   }
 
   // ── Coordinate card prefetch ──────────────────────────────────────────────
@@ -204,7 +217,11 @@ class _PitcherGameScreenState extends State<PitcherGameScreen>
                   ),
                 ],
               ),
-              if (widget.setupNumbers.isNotEmpty) _buildSetupSummary(),
+              if (widget.setupNumbers.isNotEmpty || _doubleJudgment != null)
+                SetupNumbersSummaryBar(
+                  setupNumbers: widget.setupNumbers,
+                  doubleJudgment: _doubleJudgment,
+                ),
               _buildPitchDisplay(),
               Expanded(child: _buildCoordGridArea()),
               _buildHandArea(),
@@ -290,39 +307,6 @@ class _PitcherGameScreenState extends State<PitcherGameScreen>
           child: Text('투수', style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 11, fontWeight: FontWeight.w700)),
         ),
       ]),
-    );
-  }
-
-  // ── Setup summary ─────────────────────────────────────────────────────────
-
-  Widget _buildSetupSummary() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 2),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.40),
-          borderRadius: BorderRadius.circular(9),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.09)),
-        ),
-        child: Wrap(
-          spacing: 8,
-          runSpacing: 2,
-          children: widget.setupNumbers.entries.map((e) {
-            final color = _kSetupColors[e.key] ?? Colors.white;
-            return RichText(text: TextSpan(children: [
-              TextSpan(
-                text: '${e.key} ',
-                style: TextStyle(color: color.withValues(alpha: 0.85), fontSize: 9, fontWeight: FontWeight.w700),
-              ),
-              TextSpan(
-                text: e.value.join('·'),
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.70), fontSize: 9, fontWeight: FontWeight.w600),
-              ),
-            ]));
-          }).toList(),
-        ),
-      ),
     );
   }
 
@@ -530,16 +514,52 @@ class _PitcherGameScreenState extends State<PitcherGameScreen>
     final double mid = (total - 1) / 2.0;
     final double t = i - mid;
     final bool isSelected = _selectedCard?.cardId == card.cardId;
+    final bool isPlaced = isSelected && _selectedCoord != null;
+    // 선택 후 좌표에 놓기 전까지 반투명 — 뒤 좌표 확인 가능
+    final double cardOpacity = isSelected && !isPlaced ? 0.50 : 1.0;
+
     return Positioned(
       left: left, bottom: t.abs() * 5.0 + (isSelected ? 22.0 : 0.0),
       child: Transform.rotate(
         angle: t * 0.07, alignment: Alignment.bottomCenter,
         child: Draggable<CardInfo>(
           data: card,
-          feedback: Material(color: Colors.transparent, child: Transform.scale(scale: 1.1, child: _HandCardWidget(card: card, isSelected: true, w: cardW, h: cardH))),
-          childWhenDragging: Opacity(opacity: 0.30, child: _HandCardWidget(card: card, isSelected: false, w: cardW, h: cardH)),
           onDragStarted: () => setState(() => _selectedCard = card),
-          child: GestureDetector(onTap: () => _onCardTap(card), child: _HandCardWidget(card: card, isSelected: isSelected, w: cardW, h: cardH)),
+          feedback: Material(
+            color: Colors.transparent,
+            child: Opacity(
+              opacity: 0.48,
+              child: Transform.scale(
+                scale: 1.08,
+                child: _HandCardWidget(
+                  card: card,
+                  isSelected: true,
+                  w: cardW,
+                  h: cardH,
+                ),
+              ),
+            ),
+          ),
+          childWhenDragging: Opacity(
+            opacity: 0.28,
+            child: _HandCardWidget(
+              card: card,
+              isSelected: false,
+              w: cardW,
+              h: cardH,
+              opacity: 1.0,
+            ),
+          ),
+          child: GestureDetector(
+            onTap: () => _onCardTap(card),
+            child: _HandCardWidget(
+              card: card,
+              isSelected: isSelected,
+              w: cardW,
+              h: cardH,
+              opacity: cardOpacity,
+            ),
+          ),
         ),
       ),
     );
@@ -586,12 +606,21 @@ class _HandCardWidget extends StatelessWidget {
   final CardInfo card;
   final bool isSelected;
   final double w, h;
+  final double opacity;
 
-  const _HandCardWidget({required this.card, required this.isSelected, required this.w, required this.h});
+  const _HandCardWidget({
+    required this.card,
+    required this.isSelected,
+    required this.w,
+    required this.h,
+    this.opacity = 1.0,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedContainer(
+    return Opacity(
+      opacity: opacity,
+      child: AnimatedContainer(
       duration: const Duration(milliseconds: 150),
       width: w, height: h,
       decoration: BoxDecoration(
@@ -626,6 +655,7 @@ class _HandCardWidget extends StatelessWidget {
           child: const Icon(Icons.check_rounded, color: Colors.black, size: 9),
         )),
       ]),
+      ),
     );
   }
 }
