@@ -190,7 +190,7 @@ class _HomeScreenState extends State<HomeScreen> {
       case 0: return const _ShopScreen();
       case 1: return const _WardrobeScreen();
       case 3: return const _TeamPanel();
-      default: return const _AnimatedCharacter();
+      default: return const _BoardGameBox();
     }
   }
 
@@ -1318,7 +1318,127 @@ class _BackgroundPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-// ─── 캐릭터 플로팅 애니메이션 ────────────────────────────────────────────────
+// ─── 보드게임 박스 (메인 화면) ────────────────────────────────────────────────
+
+class _BoardGameBox extends StatelessWidget {
+  const _BoardGameBox();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 32, 20, 32),
+      child: Align(
+        alignment: Alignment.center,
+        child: FractionallySizedBox(
+          heightFactor: 0.88,
+          widthFactor: 1.0,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: CustomPaint(
+              painter: const _BoardGamePanelPainter(),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                child: Image.asset(
+                  'assets/images/board_game_box.png',
+                  fit: BoxFit.contain,
+                  alignment: Alignment.center,
+                  filterQuality: FilterQuality.high,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BoardGamePanelPainter extends CustomPainter {
+  const _BoardGamePanelPainter();
+
+  static const _radius = 20.0;
+  static const _glowDepth = 14.0;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(_radius));
+
+    // 배경 그라데이션 (격자 무늬 없음)
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF1E2810), Color(0xFF2D3A15), Color(0xFF3A2208)],
+          stops: [0.0, 0.5, 1.0],
+        ).createShader(rect),
+    );
+
+    // 테두리 금색 빛 — 선 바로 안쪽만
+    canvas.save();
+    canvas.clipRRect(rrect);
+
+    void drawEdgeGlow({
+      required Alignment begin,
+      required Alignment end,
+      required Rect glowRect,
+    }) {
+      canvas.drawRect(
+        glowRect,
+        Paint()
+          ..shader = LinearGradient(
+            begin: begin,
+            end: end,
+            colors: [
+              _kGold.withValues(alpha: 0.28),
+              _kGold.withValues(alpha: 0.08),
+              Colors.transparent,
+            ],
+            stops: const [0.0, 0.35, 1.0],
+          ).createShader(glowRect),
+      );
+    }
+
+    drawEdgeGlow(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      glowRect: Rect.fromLTWH(0, 0, size.width, _glowDepth),
+    );
+    drawEdgeGlow(
+      begin: Alignment.bottomCenter,
+      end: Alignment.topCenter,
+      glowRect: Rect.fromLTWH(0, size.height - _glowDepth, size.width, _glowDepth),
+    );
+    drawEdgeGlow(
+      begin: Alignment.centerLeft,
+      end: Alignment.centerRight,
+      glowRect: Rect.fromLTWH(0, 0, _glowDepth, size.height),
+    );
+    drawEdgeGlow(
+      begin: Alignment.centerRight,
+      end: Alignment.centerLeft,
+      glowRect: Rect.fromLTWH(size.width - _glowDepth, 0, _glowDepth, size.height),
+    );
+
+    canvas.restore();
+
+    // 테두리 선
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..color = _kPanelBorder.withValues(alpha: 0.5)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+// ─── 캐릭터 (옷장 탭 전용) ────────────────────────────────────────────────────
 
 class _AnimatedCharacter extends StatefulWidget {
   const _AnimatedCharacter({super.key});
