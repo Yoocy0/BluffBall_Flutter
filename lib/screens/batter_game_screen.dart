@@ -71,7 +71,7 @@ class BatterGameScreen extends StatefulWidget {
 enum _BatterPhase { waiting, active, submitted }
 
 class _BatterGameScreenState extends State<BatterGameScreen>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+    with WidgetsBindingObserver {
   // ── Coordinate cards ──────────────────────────────────────────────────────
   List<CoordinateCard> _coordCards = [];
   bool _loadingCoords = true;
@@ -90,9 +90,6 @@ class _BatterGameScreenState extends State<BatterGameScreen>
   double _remainingSec = _kTimerMax;
   Timer? _countdownTimer;
 
-  // ── Animation for timer pulse ─────────────────────────────────────────────
-  late final AnimationController _pulseCtrl;
-
   TurnResultEvent? _lastResult;
 
   final _ws = GameWebSocketService.instance;
@@ -104,10 +101,6 @@ class _BatterGameScreenState extends State<BatterGameScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _pulseCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 600),
-    )..repeat(reverse: true);
 
     _lastResult = widget.lastResultEvent;
     GameFlowController.instance.updateSession(GameSessionContext(
@@ -127,7 +120,6 @@ class _BatterGameScreenState extends State<BatterGameScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _countdownTimer?.cancel();
-    _pulseCtrl.dispose();
     super.dispose();
   }
 
@@ -223,29 +215,47 @@ class _BatterGameScreenState extends State<BatterGameScreen>
 
   // ── Logic ─────────────────────────────────────────────────────────────────
 
-  bool get _canSwing =>
-      _selectedCoordNum != null &&
-      _selectedTiming != null &&
-      _phase == _BatterPhase.active;
-
-  void _onCoordTap(int coordNum) {
-    if (_phase != _BatterPhase.active) return;
-    setState(() {
-      _selectedCoordNum = _selectedCoordNum == coordNum ? null : coordNum;
-    });
-  }
+  bool get _isSelectionComplete =>
+      _selectedCoordNum != null && _selectedTiming != null;
 
   void _onTimingTap(_Timing timing) {
     if (_phase != _BatterPhase.active) return;
     setState(() {
-      _selectedTiming =
-          _selectedTiming == timing ? null : timing;
+      if (_selectedTiming == timing) {
+        _selectedTiming = null;
+        _selectedCoordNum = null;
+      } else {
+        _selectedTiming = timing;
+        _selectedCoordNum = null;
+      }
     });
+  }
+
+  void _onCoordPlaced(int coordNum, _Timing timing) {
+    if (_phase != _BatterPhase.active) return;
+    setState(() {
+      _selectedCoordNum = coordNum;
+      _selectedTiming = timing;
+    });
+    _submitBatterSelect();
+  }
+
+  void _onWildPitchTap() {
+    if (_phase != _BatterPhase.active) return;
+    setState(() {
+      _selectedCoordNum = 0;
+      _selectedTiming = _Timing.NORMAL;
+    });
+    _submitBatterSelect();
+  }
+
+  void _onTimingDropped(_Timing timing, int coordNum) {
+    _onCoordPlaced(coordNum, timing);
   }
 
   Future<void> _submitBatterSelect({bool forceSubmit = false}) async {
     if (_phase != _BatterPhase.active) return;
-    if (!forceSubmit && !_canSwing) return;
+    if (!forceSubmit && !_isSelectionComplete) return;
 
     _countdownTimer?.cancel();
 
@@ -304,8 +314,7 @@ class _BatterGameScreenState extends State<BatterGameScreen>
               _buildSelectionDisplay(),
               _buildTimerBar(),
               Expanded(child: _buildCoordGridArea()),
-              _buildTimingSlots(),
-              _buildBottomBar(),
+              _buildTimingHandArea(),
               const SizedBox(height: 12),
             ]),
           ),
@@ -540,37 +549,29 @@ class _BatterGameScreenState extends State<BatterGameScreen>
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                AnimatedBuilder(
-                  animation: _pulseCtrl,
-                  builder: (ctx, child) {
-                    final opacity = isUrgent
-                        ? 0.6 + _pulseCtrl.value * 0.4
-                        : 1.0;
-                    return Opacity(
-                      opacity: opacity,
-                      child: Text(
-                        '${_remainingSec.toStringAsFixed(1)}초',
-                        style: TextStyle(
-                          color: isUrgent
-                              ? const Color(0xFFFF5252)
-                              : Colors.white.withValues(alpha: 0.85),
-                          fontSize: isUrgent ? 16 : 14,
-                          fontWeight: FontWeight.w800,
-                          shadows: isUrgent
-                              ? const [
-                                  Shadow(
-                                    color: Color(0xFFFF5252),
-                                    blurRadius: 8,
-                                  )
-                                ]
-                              : null,
-                        ),
-                      ),
-                    );
-                  },
+                AnimatedDefaultTextStyle(
+                  duration: const Duration(milliseconds: 200),
+                  style: TextStyle(
+                    color: isUrgent
+                        ? const Color(0xFFFF5252)
+                        : Colors.white.withValues(alpha: 0.85),
+                    fontSize: isUrgent ? 16 : 14,
+                    fontWeight: FontWeight.w800,
+                    shadows: isUrgent
+                        ? const [
+                            Shadow(
+                              color: Color(0xFFFF5252),
+                              blurRadius: 8,
+                            )
+                          ]
+                        : null,
+                  ),
+                  child: Text(
+                    '${_remainingSec.toStringAsFixed(1)}초',
+                  ),
                 ),
                 Text(
-                  isUrgent ? '서둘러!' : '타이밍을 선택하세요',
+                  isUrgent ? '서둘러!' : '타이밍 카드를 좌표에 놓으세요',
                   style: TextStyle(
                     color: isUrgent
                         ? const Color(0xFFFF8A65)
@@ -709,7 +710,7 @@ class _BatterGameScreenState extends State<BatterGameScreen>
     final isActive = _phase == _BatterPhase.active;
 
     return GestureDetector(
-      onTap: isActive ? () => _onCoordTap(0) : null,
+      onTap: isActive ? _onWildPitchTap : null,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 120),
         height: 38,
@@ -746,7 +747,7 @@ class _BatterGameScreenState extends State<BatterGameScreen>
               ),
               const SizedBox(width: 6),
               Text(
-                '0  ·  폭투 존',
+                '0  ·  폭투 존  (탭 = 보통)',
                 style: TextStyle(
                   color: isSelected
                       ? const Color(0xFFFF5252)
@@ -766,228 +767,196 @@ class _BatterGameScreenState extends State<BatterGameScreen>
     final isStrike = coord.isStrike;
     final isSelected = _selectedCoordNum == coord.coordinateNumber;
     final isActive = _phase == _BatterPhase.active;
+    final placedTiming = isSelected ? _selectedTiming : null;
 
-    return GestureDetector(
-      onTap: isActive ? () => _onCoordTap(coord.coordinateNumber) : null,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 120),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? const Color(0xFF448AFF).withValues(alpha: 0.28)
-              : (isStrike
-                  ? const Color(0xFF7CFC00).withValues(alpha: 0.10)
-                  : Colors.white.withValues(alpha: 0.05)),
-          borderRadius: BorderRadius.circular(7),
-          border: Border.all(
-            color: isSelected
-                ? const Color(0xFF448AFF)
+    return DragTarget<_Timing>(
+      onWillAcceptWithDetails: (_) => isActive,
+      onAcceptWithDetails: (d) =>
+          _onTimingDropped(d.data, coord.coordinateNumber),
+      builder: (ctx, candidates, rejected) {
+        final hover = candidates.isNotEmpty;
+        final bgColor = isSelected
+            ? const Color(0xFF448AFF).withValues(alpha: 0.28)
+            : hover
+                ? Colors.white.withValues(alpha: 0.22)
+                : (isStrike
+                    ? const Color(0xFF7CFC00).withValues(alpha: 0.10)
+                    : Colors.white.withValues(alpha: 0.05));
+        final borderColor = isSelected
+            ? const Color(0xFF448AFF)
+            : hover
+                ? Colors.white.withValues(alpha: 0.70)
                 : (isStrike
                     ? const Color(0xFF7CFC00).withValues(alpha: 0.45)
-                    : Colors.white.withValues(alpha: 0.15)),
-            width: isSelected ? 1.8 : 1.0,
-          ),
-          boxShadow: isSelected
-              ? [
-                  BoxShadow(
-                    color: const Color(0xFF448AFF).withValues(alpha: 0.35),
-                    blurRadius: 8,
-                    spreadRadius: 1,
-                  )
-                ]
+                    : Colors.white.withValues(alpha: 0.15));
+
+        return GestureDetector(
+          onTap: isActive && _selectedTiming != null
+              ? () => _onCoordPlaced(coord.coordinateNumber, _selectedTiming!)
               : null,
-        ),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '${coord.coordinateNumber}',
-                style: TextStyle(
-                  color: isSelected
-                      ? const Color(0xFF90CAFF)
-                      : (isStrike
-                          ? const Color(0xFF7CFC00)
-                          : Colors.white.withValues(
-                              alpha: isActive ? 0.75 : 0.30)),
-                  fontSize: 13,
-                  fontWeight:
-                      isSelected ? FontWeight.w900 : FontWeight.w600,
-                ),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(7),
+              border: Border.all(
+                color: borderColor,
+                width: isSelected || hover ? 1.8 : 1.0,
               ),
-              if (isStrike && !isSelected)
-                Container(
-                  width: 4,
-                  height: 4,
-                  margin: const EdgeInsets.only(top: 2),
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Color(0xFF7CFC00),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ── Timing slots ──────────────────────────────────────────────────────────
-
-  Widget _buildTimingSlots() {
-    final isActive = _phase == _BatterPhase.active;
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-      child: Row(
-        children: _Timing.values.map((t) {
-          final isSelected = _selectedTiming == t;
-          return Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 3),
-              child: GestureDetector(
-                onTap: isActive ? () => _onTimingTap(t) : null,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 130),
-                  height: 68,
-                  decoration: BoxDecoration(
-                    color: isSelected
-                        ? t.color.withValues(alpha: 0.25)
-                        : (isActive
-                            ? Colors.white.withValues(alpha: 0.06)
-                            : Colors.white.withValues(alpha: 0.03)),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: isSelected
-                          ? t.color
-                          : (isActive
-                              ? Colors.white.withValues(alpha: 0.18)
-                              : Colors.white.withValues(alpha: 0.08)),
-                      width: isSelected ? 1.8 : 1.0,
-                    ),
-                    boxShadow: isSelected
-                        ? [
-                            BoxShadow(
-                              color: t.color.withValues(alpha: 0.40),
-                              blurRadius: 10,
-                              spreadRadius: 1,
-                            )
-                          ]
-                        : null,
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
+              boxShadow: isSelected
+                  ? [
+                      BoxShadow(
+                        color: const Color(0xFF448AFF).withValues(alpha: 0.35),
+                        blurRadius: 8,
+                        spreadRadius: 1,
+                      )
+                    ]
+                  : null,
+            ),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                if (placedTiming != null)
+                  Padding(
+                    padding: const EdgeInsets.all(3),
+                    child: _TimingCardMini(timing: placedTiming),
+                  )
+                else
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      // 컬러 상단 띠
-                      Container(
-                        width: 24,
-                        height: 3,
-                        margin: const EdgeInsets.only(bottom: 6),
-                        decoration: BoxDecoration(
-                          color: isSelected
-                              ? t.color
-                              : t.color.withValues(alpha: 0.35),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
                       Text(
-                        t.label,
-                        textAlign: TextAlign.center,
+                        '${coord.coordinateNumber}',
                         style: TextStyle(
                           color: isSelected
-                              ? Colors.white
-                              : (isActive
-                                  ? Colors.white.withValues(alpha: 0.55)
-                                  : Colors.white.withValues(alpha: 0.20)),
-                          fontSize: 10,
-                          fontWeight: isSelected
-                              ? FontWeight.w800
-                              : FontWeight.w600,
-                          height: 1.3,
+                              ? const Color(0xFF90CAFF)
+                              : (isStrike
+                                  ? const Color(0xFF7CFC00)
+                                  : Colors.white.withValues(
+                                      alpha: isActive ? 0.75 : 0.30)),
+                          fontSize: 13,
+                          fontWeight:
+                              isSelected ? FontWeight.w900 : FontWeight.w600,
                         ),
                       ),
+                      if (isStrike && !isSelected)
+                        Container(
+                          width: 4,
+                          height: 4,
+                          margin: const EdgeInsets.only(top: 2),
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Color(0xFF7CFC00),
+                          ),
+                        ),
                     ],
                   ),
-                ),
-              ),
+              ],
             ),
-          );
-        }).toList(),
-      ),
+          ),
+        );
+      },
     );
   }
 
-  // ── Bottom bar ────────────────────────────────────────────────────────────
+  // ── Timing hand (구종 카드와 동일한 드래그 방식) ───────────────────────────
 
-  Widget _buildBottomBar() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          GestureDetector(
-            onTap: _canSwing ? () => _submitBatterSelect() : null,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              height: 50,
-              padding: const EdgeInsets.symmetric(horizontal: 28),
-              decoration: BoxDecoration(
-                gradient: _canSwing
-                    ? const LinearGradient(
-                        colors: [Color(0xFF1565C0), Color(0xFF42A5F5)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      )
-                    : null,
-                color: _canSwing
-                    ? null
-                    : Colors.white.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: _canSwing
-                      ? Colors.transparent
-                      : Colors.white.withValues(alpha: 0.14),
-                ),
-                boxShadow: _canSwing
-                    ? [
-                        BoxShadow(
-                          color: const Color(0xFF42A5F5)
-                              .withValues(alpha: 0.45),
-                          blurRadius: 16,
-                          spreadRadius: 1,
-                          offset: const Offset(0, 3),
-                        )
-                      ]
-                    : null,
+  Widget _buildTimingHandArea() {
+    if (_phase != _BatterPhase.active) {
+      return const SizedBox(height: 130);
+    }
+
+    const timings = _Timing.values;
+    const cardW = 76.0;
+    const cardH = 108.0;
+    const spread = 52.0;
+    const areaH = 138.0;
+    final n = timings.length;
+    final totalW = (n - 1) * spread + cardW;
+
+    return SizedBox(
+      height: areaH,
+      child: LayoutBuilder(builder: (context, constraints) {
+        final sx = constraints.maxWidth / 2 - totalW / 2;
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            for (int i = 0; i < n; i++)
+              _buildTimingHandCard(
+                i,
+                n,
+                timings[i],
+                sx + i * spread,
+                cardW,
+                cardH,
               ),
-              child: Center(
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.sports_baseball_rounded,
-                      color: _canSwing
-                          ? Colors.white
-                          : Colors.white.withValues(alpha: 0.28),
-                      size: 18,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '타격',
-                      style: TextStyle(
-                        color: _canSwing
-                            ? Colors.white
-                            : Colors.white.withValues(alpha: 0.28),
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ],
+          ],
+        );
+      }),
+    );
+  }
+
+  Widget _buildTimingHandCard(
+    int i,
+    int total,
+    _Timing timing,
+    double left,
+    double cardW,
+    double cardH,
+  ) {
+    final mid = (total - 1) / 2.0;
+    final t = i - mid;
+    final isSelected = _selectedTiming == timing;
+    final isPlaced = isSelected && _selectedCoordNum != null;
+    final cardOpacity = isSelected && !isPlaced ? 0.50 : 1.0;
+
+    return Positioned(
+      left: left,
+      bottom: t.abs() * 5.0 + (isSelected ? 22.0 : 0.0),
+      child: Transform.rotate(
+        angle: t * 0.07,
+        alignment: Alignment.bottomCenter,
+        child: Draggable<_Timing>(
+          data: timing,
+          onDragStarted: () => setState(() {
+            _selectedTiming = timing;
+            _selectedCoordNum = null;
+          }),
+          feedback: Material(
+            color: Colors.transparent,
+            child: Opacity(
+              opacity: 0.48,
+              child: Transform.scale(
+                scale: 1.08,
+                child: _TimingCardWidget(
+                  timing: timing,
+                  isSelected: true,
+                  w: cardW,
+                  h: cardH,
                 ),
               ),
             ),
           ),
-        ],
+          childWhenDragging: Opacity(
+            opacity: 0.28,
+            child: _TimingCardWidget(
+              timing: timing,
+              isSelected: false,
+              w: cardW,
+              h: cardH,
+            ),
+          ),
+          child: GestureDetector(
+            onTap: () => _onTimingTap(timing),
+            child: _TimingCardWidget(
+              timing: timing,
+              isSelected: isSelected,
+              w: cardW,
+              h: cardH,
+              opacity: cardOpacity,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1123,6 +1092,178 @@ class _BatterGameScreenState extends State<BatterGameScreen>
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ─── Timing card widgets ──────────────────────────────────────────────────────
+
+class _TimingCardWidget extends StatelessWidget {
+  final _Timing timing;
+  final bool isSelected;
+  final double w, h;
+  final double opacity;
+
+  const _TimingCardWidget({
+    required this.timing,
+    required this.isSelected,
+    required this.w,
+    required this.h,
+    this.opacity = 1.0,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Opacity(
+      opacity: opacity,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        width: w,
+        height: h,
+        decoration: BoxDecoration(
+          color: const Color(0xFF12122A).withValues(alpha: 0.92),
+          borderRadius: BorderRadius.circular(11),
+          border: Border.all(
+            color: isSelected
+                ? const Color(0xFFFFD700)
+                : Colors.white.withValues(alpha: 0.18),
+            width: isSelected ? 2.0 : 1.0,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: isSelected
+                  ? const Color(0xFFFFD700).withValues(alpha: 0.45)
+                  : Colors.black.withValues(alpha: 0.45),
+              blurRadius: isSelected ? 14 : 6,
+              spreadRadius: isSelected ? 1 : 0,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Stack(
+          children: [
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                height: 3,
+                decoration: BoxDecoration(
+                  color: timing.color,
+                  borderRadius:
+                      const BorderRadius.vertical(top: Radius.circular(10)),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(7, 10, 7, 7),
+              child: Column(
+                children: [
+                  Text(
+                    '타이밍',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.45),
+                      fontSize: 8,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  Icon(
+                    Icons.timer_rounded,
+                    color: timing.color,
+                    size: 28,
+                    shadows: [
+                      Shadow(
+                        color: timing.color.withValues(alpha: 0.45),
+                        blurRadius: 10,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    timing.label.replaceAll('\n', ' '),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      height: 1.2,
+                      shadows: [
+                        Shadow(blurRadius: 3, color: Colors.black54),
+                      ],
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const Spacer(),
+                ],
+              ),
+            ),
+            if (isSelected)
+              const Positioned(
+                top: 6,
+                right: 6,
+                child: SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Color(0xFFFFD700),
+                    ),
+                    child: Icon(Icons.check_rounded, color: Colors.black, size: 9),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TimingCardMini extends StatelessWidget {
+  final _Timing timing;
+
+  const _TimingCardMini({required this.timing});
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF12122A).withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: timing.color.withValues(alpha: 0.85), width: 1.2),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            height: 2,
+            decoration: BoxDecoration(
+              color: timing.color,
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(4)),
+            ),
+          ),
+          Expanded(
+            child: Center(
+              child: Text(
+                timing.label.replaceAll('\n', ' '),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: timing.color,
+                  fontSize: 7,
+                  fontWeight: FontWeight.w800,
+                  height: 1.1,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
