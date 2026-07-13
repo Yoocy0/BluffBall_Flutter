@@ -530,16 +530,52 @@ class _PitcherGameScreenState extends State<PitcherGameScreen>
     final double mid = (total - 1) / 2.0;
     final double t = i - mid;
     final bool isSelected = _selectedCard?.cardId == card.cardId;
+    final bool isPlaced = isSelected && _selectedCoord != null;
+    // 선택 후 좌표에 놓기 전까지 반투명 — 뒤 좌표 확인 가능
+    final double cardOpacity = isSelected && !isPlaced ? 0.50 : 1.0;
+
     return Positioned(
       left: left, bottom: t.abs() * 5.0 + (isSelected ? 22.0 : 0.0),
       child: Transform.rotate(
         angle: t * 0.07, alignment: Alignment.bottomCenter,
         child: Draggable<CardInfo>(
           data: card,
-          feedback: Material(color: Colors.transparent, child: Transform.scale(scale: 1.1, child: _HandCardWidget(card: card, isSelected: true, w: cardW, h: cardH))),
-          childWhenDragging: Opacity(opacity: 0.30, child: _HandCardWidget(card: card, isSelected: false, w: cardW, h: cardH)),
           onDragStarted: () => setState(() => _selectedCard = card),
-          child: GestureDetector(onTap: () => _onCardTap(card), child: _HandCardWidget(card: card, isSelected: isSelected, w: cardW, h: cardH)),
+          feedback: Material(
+            color: Colors.transparent,
+            child: Opacity(
+              opacity: 0.48,
+              child: Transform.scale(
+                scale: 1.08,
+                child: _HandCardWidget(
+                  card: card,
+                  isSelected: true,
+                  w: cardW,
+                  h: cardH,
+                ),
+              ),
+            ),
+          ),
+          childWhenDragging: Opacity(
+            opacity: 0.28,
+            child: _HandCardWidget(
+              card: card,
+              isSelected: false,
+              w: cardW,
+              h: cardH,
+              opacity: 1.0,
+            ),
+          ),
+          child: GestureDetector(
+            onTap: () => _onCardTap(card),
+            child: _HandCardWidget(
+              card: card,
+              isSelected: isSelected,
+              w: cardW,
+              h: cardH,
+              opacity: cardOpacity,
+            ),
+          ),
         ),
       ),
     );
@@ -586,12 +622,21 @@ class _HandCardWidget extends StatelessWidget {
   final CardInfo card;
   final bool isSelected;
   final double w, h;
+  final double opacity;
 
-  const _HandCardWidget({required this.card, required this.isSelected, required this.w, required this.h});
+  const _HandCardWidget({
+    required this.card,
+    required this.isSelected,
+    required this.w,
+    required this.h,
+    this.opacity = 1.0,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedContainer(
+    return Opacity(
+      opacity: opacity,
+      child: AnimatedContainer(
       duration: const Duration(milliseconds: 150),
       width: w, height: h,
       decoration: BoxDecoration(
@@ -626,6 +671,7 @@ class _HandCardWidget extends StatelessWidget {
           child: const Icon(Icons.check_rounded, color: Colors.black, size: 9),
         )),
       ]),
+      ),
     );
   }
 }
