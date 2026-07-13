@@ -41,6 +41,7 @@ const _kSetupColors = {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const _kTimerMax = 5.0; // seconds
+const _kPitcherStartColor = Color(0xFFBB66FF);
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
@@ -415,12 +416,12 @@ class _BatterGameScreenState extends State<BatterGameScreen>
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
         color: hasInfo
-            ? const Color(0xFFFF5722).withValues(alpha: 0.20)
+            ? _kPitcherStartColor.withValues(alpha: 0.22)
             : Colors.black.withValues(alpha: 0.25),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
           color: hasInfo
-              ? const Color(0xFFFF5722).withValues(alpha: 0.45)
+              ? _kPitcherStartColor.withValues(alpha: 0.55)
               : Colors.white.withValues(alpha: 0.10),
         ),
       ),
@@ -431,7 +432,7 @@ class _BatterGameScreenState extends State<BatterGameScreen>
             Icons.sports_baseball_rounded,
             size: 14,
             color: hasInfo
-                ? const Color(0xFFFF8A65)
+                ? _kPitcherStartColor
                 : Colors.white.withValues(alpha: 0.25),
           ),
           const SizedBox(width: 8),
@@ -707,6 +708,7 @@ class _BatterGameScreenState extends State<BatterGameScreen>
 
   Widget _buildWildCell(CoordinateCard coord) {
     final isSelected = _selectedCoordNum == 0;
+    final isPitcherStart = _pitcherStartCoord == 0;
     final isActive = _phase == _BatterPhase.active;
 
     return GestureDetector(
@@ -717,13 +719,17 @@ class _BatterGameScreenState extends State<BatterGameScreen>
         decoration: BoxDecoration(
           color: isSelected
               ? const Color(0xFFFF5252).withValues(alpha: 0.28)
-              : const Color(0xFFFF5252).withValues(alpha: 0.07),
+              : isPitcherStart
+                  ? _kPitcherStartColor.withValues(alpha: 0.38)
+                  : const Color(0xFFFF5252).withValues(alpha: 0.07),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
             color: isSelected
                 ? const Color(0xFFFF5252)
-                : const Color(0xFFFF5252).withValues(alpha: 0.35),
-            width: isSelected ? 1.8 : 1.0,
+                : isPitcherStart
+                    ? _kPitcherStartColor
+                    : const Color(0xFFFF5252).withValues(alpha: 0.35),
+            width: isSelected || isPitcherStart ? 1.8 : 1.0,
           ),
           boxShadow: isSelected
               ? [
@@ -732,7 +738,14 @@ class _BatterGameScreenState extends State<BatterGameScreen>
                     blurRadius: 8,
                   )
                 ]
-              : null,
+              : isPitcherStart
+                  ? [
+                      BoxShadow(
+                        color: _kPitcherStartColor.withValues(alpha: 0.40),
+                        blurRadius: 8,
+                      )
+                    ]
+                  : null,
         ),
         child: Center(
           child: Row(
@@ -766,6 +779,7 @@ class _BatterGameScreenState extends State<BatterGameScreen>
   Widget _buildCoordCell(CoordinateCard coord) {
     final isStrike = coord.isStrike;
     final isSelected = _selectedCoordNum == coord.coordinateNumber;
+    final isPitcherStart = _pitcherStartCoord == coord.coordinateNumber;
     final isActive = _phase == _BatterPhase.active;
     final placedTiming = isSelected ? _selectedTiming : null;
 
@@ -777,18 +791,22 @@ class _BatterGameScreenState extends State<BatterGameScreen>
         final hover = candidates.isNotEmpty;
         final bgColor = isSelected
             ? const Color(0xFF448AFF).withValues(alpha: 0.28)
-            : hover
-                ? Colors.white.withValues(alpha: 0.22)
-                : (isStrike
-                    ? const Color(0xFF7CFC00).withValues(alpha: 0.10)
-                    : Colors.white.withValues(alpha: 0.05));
+            : isPitcherStart
+                ? _kPitcherStartColor.withValues(alpha: 0.38)
+                : hover
+                    ? Colors.white.withValues(alpha: 0.22)
+                    : (isStrike
+                        ? const Color(0xFF7CFC00).withValues(alpha: 0.10)
+                        : Colors.white.withValues(alpha: 0.05));
         final borderColor = isSelected
             ? const Color(0xFF448AFF)
-            : hover
-                ? Colors.white.withValues(alpha: 0.70)
-                : (isStrike
-                    ? const Color(0xFF7CFC00).withValues(alpha: 0.45)
-                    : Colors.white.withValues(alpha: 0.15));
+            : isPitcherStart
+                ? _kPitcherStartColor
+                : hover
+                    ? Colors.white.withValues(alpha: 0.70)
+                    : (isStrike
+                        ? const Color(0xFF7CFC00).withValues(alpha: 0.45)
+                        : Colors.white.withValues(alpha: 0.15));
 
         return GestureDetector(
           onTap: isActive && _selectedTiming != null
@@ -801,7 +819,7 @@ class _BatterGameScreenState extends State<BatterGameScreen>
               borderRadius: BorderRadius.circular(7),
               border: Border.all(
                 color: borderColor,
-                width: isSelected || hover ? 1.8 : 1.0,
+                width: isSelected || hover || isPitcherStart ? 1.8 : 1.0,
               ),
               boxShadow: isSelected
                   ? [
@@ -811,7 +829,15 @@ class _BatterGameScreenState extends State<BatterGameScreen>
                         spreadRadius: 1,
                       )
                     ]
-                  : null,
+                  : isPitcherStart
+                      ? [
+                          BoxShadow(
+                            color: _kPitcherStartColor.withValues(alpha: 0.42),
+                            blurRadius: 8,
+                            spreadRadius: 1,
+                          )
+                        ]
+                      : null,
             ),
             child: Stack(
               alignment: Alignment.center,
@@ -830,16 +856,29 @@ class _BatterGameScreenState extends State<BatterGameScreen>
                         style: TextStyle(
                           color: isSelected
                               ? const Color(0xFF90CAFF)
-                              : (isStrike
-                                  ? const Color(0xFF7CFC00)
-                                  : Colors.white.withValues(
-                                      alpha: isActive ? 0.75 : 0.30)),
+                              : isPitcherStart
+                                  ? Colors.white
+                                  : (isStrike
+                                      ? const Color(0xFF7CFC00)
+                                      : Colors.white.withValues(
+                                          alpha: isActive ? 0.75 : 0.30)),
                           fontSize: 13,
-                          fontWeight:
-                              isSelected ? FontWeight.w900 : FontWeight.w600,
+                          fontWeight: isSelected || isPitcherStart
+                              ? FontWeight.w900
+                              : FontWeight.w600,
                         ),
                       ),
-                      if (isStrike && !isSelected)
+                      if (isPitcherStart && !isSelected)
+                        Text(
+                          '시작',
+                          style: TextStyle(
+                            color: _kPitcherStartColor.withValues(alpha: 0.95),
+                            fontSize: 7,
+                            fontWeight: FontWeight.w800,
+                            height: 1.1,
+                          ),
+                        )
+                      else if (isStrike && !isSelected)
                         Container(
                           width: 4,
                           height: 4,
