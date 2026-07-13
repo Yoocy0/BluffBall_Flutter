@@ -109,7 +109,7 @@ class DiceWidget extends StatelessWidget {
   const DiceWidget({
     super.key,
     required this.value,
-    this.size = 80.0,
+    this.size = 64.0,
     this.faceColor = Colors.white,
     this.pipColor = const Color(0xFF1A1A2E),
   });
@@ -148,7 +148,7 @@ class DiceThrowWidget extends StatefulWidget {
     required this.diceCount,
     required this.diceValues,
     this.onLanded,
-    this.diceSize = 72.0,
+    this.diceSize = 57.6,
   }) : assert(diceCount >= 1 && diceCount <= 2);
 
   @override

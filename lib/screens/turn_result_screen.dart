@@ -274,7 +274,7 @@ class _TurnResultScreenState extends State<TurnResultScreen>
               diceCount: ev.diceResults.length,
               diceValues: ev.diceResults,
               onLanded: _onDiceLanded,
-              diceSize: 78.0,
+              diceSize: 62.4,
             ),
             AnimatedOpacity(
               opacity: _phase == _ResultPhase.reveal ? 1 : 0,
