@@ -14,6 +14,7 @@ import '../services/game_match_meta_service.dart';
 import '../services/game_websocket_service.dart';
 import '../services/token_storage.dart';
 import '../widgets/match_info_overlay.dart';
+import '../widgets/opponent_disconnected_overlay.dart';
 import '../widgets/mode_background.dart';
 import '../widgets/setup_numbers_summary.dart';
 
@@ -49,6 +50,9 @@ class BatterGameScreen extends StatefulWidget {
   final int initialPitcherUserId;
   final TurnResultEvent? lastResultEvent;
 
+  /// 재접속 시 서버 turn.startCoordinateNumber (BATTER_SELECT phase).
+  final int? restoredStartCoordinateNumber;
+
   const BatterGameScreen({
     super.key,
     required this.gameMode,
@@ -59,6 +63,7 @@ class BatterGameScreen extends StatefulWidget {
     this.setupNumbers = const {},
     this.doubleJudgment,
     this.lastResultEvent,
+    this.restoredStartCoordinateNumber,
   });
 
   @override
@@ -107,7 +112,18 @@ class _BatterGameScreenState extends State<BatterGameScreen>
     if (_doubleJudgment == null) _loadDoubleJudgment();
     _fetchCoordinateCards();
     _subscribeToGameTopic();
-    _ws.refreshResultTopicSubscription(widget.matchSessionId);
+    _ws.bootstrapMatchSession(widget.matchSessionId);
+    _restoreBatterTurnIfNeeded();
+  }
+
+  void _restoreBatterTurnIfNeeded() {
+    final startCoord = widget.restoredStartCoordinateNumber;
+    if (startCoord == null || startCoord <= 0) return;
+    _pitcherStartCoord = startCoord;
+    _pitcherReadyAt = DateTime.now();
+    _remainingSec = _kTimerMax;
+    _phase = _BatterPhase.active;
+    _startCountdown();
   }
 
   @override
@@ -308,7 +324,10 @@ class _BatterGameScreenState extends State<BatterGameScreen>
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
       child: Scaffold(
-        body: Stack(children: [
+        body: InGamePresenceShell(
+          matchSessionId: widget.matchSessionId,
+          gameMode: widget.gameMode,
+          child: Stack(children: [
           ModeBackground(mode: widget.gameMode),
           SafeArea(
             child: Column(children: [
@@ -339,6 +358,7 @@ class _BatterGameScreenState extends State<BatterGameScreen>
           if (_phase == _BatterPhase.waiting) _buildWaitingOverlay(),
           if (_phase == _BatterPhase.submitted) _buildSubmittedOverlay(),
         ]),
+        ),
       ),
     );
   }

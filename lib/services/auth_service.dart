@@ -7,6 +7,7 @@ import 'package:kakao_flutter_sdk_auth/kakao_flutter_sdk_auth.dart';
 import '../core/api_client.dart';
 import '../models/login_response.dart';
 import 'token_storage.dart';
+import 'match_session_storage.dart';
 
 /// ─── TODO: 아래 상수들을 실제 값으로 교체 ────────────────────────────────────
 ///
@@ -176,6 +177,7 @@ class AuthService {
 
   Future<void> signOut() async {
     await _tokenStorage.clear();
+    await MatchSessionCoordinator.onSessionEnd();
     try {
       await _googleSignIn.signOut();
     } catch (_) {}

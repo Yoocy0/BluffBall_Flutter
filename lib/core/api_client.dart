@@ -1,5 +1,7 @@
 import 'package:dio/dio.dart';
 
+import 'auth_interceptor.dart';
+
 /// Dio 싱글턴 클라이언트
 ///
 /// baseUrl 설정:
@@ -37,6 +39,7 @@ class ApiClient {
       ),
     );
 
+    dio.interceptors.add(AuthInterceptor());
     dio.interceptors.add(
       LogInterceptor(requestBody: true, responseBody: true, logPrint: _log),
     );

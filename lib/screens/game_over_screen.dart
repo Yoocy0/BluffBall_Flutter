@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/game_mode.dart';
+import '../navigation/app_navigator.dart';
+import '../screens/home_screen.dart';
 import '../services/game_websocket_service.dart';
 import '../widgets/mode_background.dart';
 
@@ -9,6 +11,8 @@ class GameOverScreen extends StatefulWidget {
   final int myScore;
   final int opponentScore;
   final bool didWin;
+  final String? endReason;
+  final bool isForfeit;
 
   const GameOverScreen({
     super.key,
@@ -16,6 +20,8 @@ class GameOverScreen extends StatefulWidget {
     required this.myScore,
     required this.opponentScore,
     required this.didWin,
+    this.endReason,
+    this.isForfeit = false,
   });
 
   @override
@@ -53,6 +59,7 @@ class _GameOverScreenState extends State<GameOverScreen>
     final win = widget.didWin;
     final resultColor = win ? const Color(0xFFFFD700) : const Color(0xFFFF1744);
     final resultText = win ? 'Win' : 'Lose';
+    final subtitle = widget.isForfeit ? '몰수패' : null;
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
@@ -67,7 +74,7 @@ class _GameOverScreenState extends State<GameOverScreen>
                 opacity: _fade,
                 child: ScaleTransition(
                   scale: _scale,
-                  child: _buildResultPanel(win, resultColor, resultText),
+                  child: _buildResultPanel(win, resultColor, resultText, subtitle),
                 ),
               ),
               const Spacer(),
@@ -80,7 +87,12 @@ class _GameOverScreenState extends State<GameOverScreen>
     );
   }
 
-  Widget _buildResultPanel(bool win, Color color, String resultText) {
+  Widget _buildResultPanel(
+    bool win,
+    Color color,
+    String resultText,
+    String? subtitle,
+  ) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 28),
       padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 28),
@@ -162,6 +174,18 @@ class _GameOverScreenState extends State<GameOverScreen>
           ),
           const SizedBox(height: 20),
 
+          if (subtitle != null) ...[
+            Text(
+              subtitle,
+              style: TextStyle(
+                color: Colors.black.withValues(alpha: 0.55),
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+
           // 구분선
           Divider(color: Colors.black.withValues(alpha: 0.08)),
           const SizedBox(height: 16),
@@ -206,9 +230,12 @@ class _GameOverScreenState extends State<GameOverScreen>
         width: double.infinity,
         child: GestureDetector(
           onTap: () {
-                GameWebSocketService.instance.disconnect();
-                Navigator.of(context).popUntil((r) => r.isFirst);
-              },
+            GameWebSocketService.instance.disconnect();
+            rootNavigatorKey.currentState?.pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const HomeScreen()),
+              (_) => false,
+            );
+          },
           child: Container(
             height: 52,
             decoration: BoxDecoration(

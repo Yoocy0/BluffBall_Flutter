@@ -5,6 +5,7 @@ import '../models/setup_number_request.dart';
 import '../services/game_websocket_service.dart';
 import '../services/match_service.dart';
 import '../services/token_storage.dart';
+import '../widgets/opponent_disconnected_overlay.dart';
 import 'pitch_selection_screen.dart';
 
 // ─── Step enum ────────────────────────────────────────────────────────────────
@@ -119,7 +120,7 @@ class _SetupScreenState extends State<SetupScreen> {
       onEvent: (_) {},
       onAllReady: (_) {},
     );
-    _ws.ensureResultTopicSubscription(sessionId);
+    _ws.bootstrapMatchSession(sessionId);
   }
 
   @override
@@ -254,7 +255,10 @@ class _SetupScreenState extends State<SetupScreen> {
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
       child: Scaffold(
-        body: Stack(children: [
+        body: InGamePresenceShell(
+          matchSessionId: widget.matchSessionId ?? '',
+          gameMode: widget.gameMode,
+          child: Stack(children: [
           _buildBackground(),
           SafeArea(
             child: Column(children: [
@@ -268,6 +272,7 @@ class _SetupScreenState extends State<SetupScreen> {
             ]),
           ),
         ]),
+        ),
       ),
     );
   }

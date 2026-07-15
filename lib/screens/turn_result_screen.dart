@@ -6,6 +6,8 @@ import '../models/game_mode.dart';
 import '../models/turn_result_event.dart';
 import '../navigation/app_navigator.dart';
 import '../services/game_flow_controller.dart';
+import '../services/game_forfeit_service.dart';
+import '../widgets/exit_confirm_dialogs.dart';
 import '../widgets/dice_widget.dart';
 import '../widgets/mode_background.dart';
 
@@ -123,23 +125,35 @@ class _TurnResultScreenState extends State<TurnResultScreen>
   @override
   Widget build(BuildContext context) {
     final ev = widget.event;
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle.light,
-      child: Scaffold(
-        body: Stack(children: [
-          ModeBackground(mode: widget.gameMode),
-          Container(color: Colors.black.withValues(alpha: 0.50)),
-          SafeArea(
-            child: Column(children: [
-              _buildHeader(ev),
-              _buildCountBoard(ev),
-              Expanded(child: _buildCenterArea(ev)),
-              _buildBasesRow(ev),
-              _buildCountdownBar(),
-              const SizedBox(height: 20),
-            ]),
-          ),
-        ]),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        final leave = await showInGameForfeitConfirmDialog(context);
+        if (leave != true) return;
+        await GameForfeitService.instance.leaveMatchWithForfeit(
+          gameMode: widget.gameMode,
+          matchSessionId: widget.matchSessionId,
+        );
+      },
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: SystemUiOverlayStyle.light,
+        child: Scaffold(
+          body: Stack(children: [
+            ModeBackground(mode: widget.gameMode),
+            Container(color: Colors.black.withValues(alpha: 0.50)),
+            SafeArea(
+              child: Column(children: [
+                _buildHeader(ev),
+                _buildCountBoard(ev),
+                Expanded(child: _buildCenterArea(ev)),
+                _buildBasesRow(ev),
+                _buildCountdownBar(),
+                const SizedBox(height: 20),
+              ]),
+            ),
+          ]),
+        ),
       ),
     );
   }

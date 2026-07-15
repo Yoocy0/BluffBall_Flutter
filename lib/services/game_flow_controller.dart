@@ -9,6 +9,7 @@ import '../screens/game_over_screen.dart';
 import '../screens/pitcher_game_screen.dart';
 import '../screens/turn_result_screen.dart';
 import 'game_websocket_service.dart';
+import 'match_session_storage.dart';
 
 /// 인게임 세션 컨텍스트 (턴 결과 수신 시 화면 전환에 사용).
 class GameSessionContext {
@@ -80,6 +81,7 @@ class GameFlowController {
   void clearSession() {
     _session = null;
     _pendingResult = null;
+    MatchSessionCoordinator.onSessionEnd();
   }
 
   /// 공수 교대(RoleChangedEvent) 시 세션의 투수 ID만 갱신.
@@ -100,6 +102,9 @@ class GameFlowController {
       print('[GameFlow] Navigator/세션 없음 — pending 저장');
       _pendingResult = event;
       return;
+    }
+    if (event.gameOver) {
+      GameWebSocketService.instance.markGameEndHandled();
     }
     _navigateToTurnResult(nav, event);
   }
@@ -155,7 +160,7 @@ class GameFlowController {
           didWin: myScore > opponentScore,
         ),
       ));
-      clearSession();
+      Future.microtask(GameWebSocketService.instance.disconnect);
       return;
     }
 

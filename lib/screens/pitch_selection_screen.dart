@@ -10,6 +10,7 @@ import '../services/game_websocket_service.dart';
 import '../services/match_service.dart';
 import '../services/token_storage.dart';
 import '../widgets/mode_background.dart';
+import '../widgets/opponent_disconnected_overlay.dart';
 import '../widgets/setup_numbers_summary.dart';
 import 'double_judgment_reveal_screen.dart';
 
@@ -26,11 +27,19 @@ class PitchSelectionScreen extends StatefulWidget {
   /// 셋업 숫자 선택 결과 { '아웃': [...], '병살': [...], '3루타': [...], '홈런': [...] }
   final Map<String, List<int>> setupNumbers;
 
+  /// 재접속 시 서버에서 받은 손패 (MULLIGAN phase).
+  final List<CardInfo> initialHandCards;
+
+  /// 재접속 시 멀리건 완료 여부.
+  final bool myMulliganDone;
+
   const PitchSelectionScreen({
     super.key,
     required this.gameMode,
     required this.matchSessionId,
     this.setupNumbers = const {},
+    this.initialHandCards = const [],
+    this.myMulliganDone = false,
   });
 
   @override
@@ -89,6 +98,22 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
     );
 
     _initWebSocket();
+    _restoreHandIfNeeded();
+  }
+
+  void _restoreHandIfNeeded() {
+    final cards = widget.initialHandCards;
+    if (cards.isEmpty) return;
+    _dealCtrl.dispose();
+    _dealCtrl = AnimationController(
+      vsync: this,
+      duration: _staggeredDuration(cards.length),
+    );
+    setState(() {
+      _cards = cards;
+      _phase = _Phase.idle;
+      _hasReplaced = widget.myMulliganDone;
+    });
   }
 
   @override
@@ -159,6 +184,7 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
       onAllReady: _handleAllReady,
     );
     _consumeBufferedCardHandIfAny();
+    _ws.bootstrapMatchSession(widget.matchSessionId);
   }
 
   void _consumeBufferedCardHandIfAny() {
@@ -388,7 +414,10 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
       child: Scaffold(
-        body: Stack(children: [
+        body: InGamePresenceShell(
+          matchSessionId: widget.matchSessionId,
+          gameMode: widget.gameMode,
+          child: Stack(children: [
           ModeBackground(mode: widget.gameMode),
           SafeArea(
             child: Column(children: [
@@ -411,6 +440,7 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
             ]),
           ),
         ]),
+        ),
       ),
     );
   }
