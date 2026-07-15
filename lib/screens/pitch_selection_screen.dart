@@ -26,11 +26,19 @@ class PitchSelectionScreen extends StatefulWidget {
   /// 셋업 숫자 선택 결과 { '아웃': [...], '병살': [...], '3루타': [...], '홈런': [...] }
   final Map<String, List<int>> setupNumbers;
 
+  /// 재접속 시 서버에서 받은 손패 (MULLIGAN phase).
+  final List<CardInfo> initialHandCards;
+
+  /// 재접속 시 멀리건 완료 여부.
+  final bool myMulliganDone;
+
   const PitchSelectionScreen({
     super.key,
     required this.gameMode,
     required this.matchSessionId,
     this.setupNumbers = const {},
+    this.initialHandCards = const [],
+    this.myMulliganDone = false,
   });
 
   @override
@@ -89,6 +97,22 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
     );
 
     _initWebSocket();
+    _restoreHandIfNeeded();
+  }
+
+  void _restoreHandIfNeeded() {
+    final cards = widget.initialHandCards;
+    if (cards.isEmpty) return;
+    _dealCtrl.dispose();
+    _dealCtrl = AnimationController(
+      vsync: this,
+      duration: _staggeredDuration(cards.length),
+    );
+    setState(() {
+      _cards = cards;
+      _phase = _Phase.idle;
+      _hasReplaced = widget.myMulliganDone;
+    });
   }
 
   @override

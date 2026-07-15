@@ -6,6 +6,7 @@ import 'package:stomp_dart_client/stomp_dart_client.dart';
 
 import '../core/api_client.dart';
 import '../services/match_service.dart';
+import '../services/match_session_storage.dart';
 import '../services/token_storage.dart';
 import '../widgets/board_game_box.dart';
 import 'match_found_screen.dart';
@@ -136,6 +137,10 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
 
   void _onMatchFound(String? matchSessionId) {
     if (!mounted) return;
+    MatchSessionCoordinator.onMatchFound(
+      matchSessionId: matchSessionId,
+      gameMode: widget.gameMode,
+    );
     _stompClient?.deactivate();
     Navigator.of(context).pushReplacement(PageRouteBuilder(
       pageBuilder: (_, __, ___) => MatchFoundScreen(

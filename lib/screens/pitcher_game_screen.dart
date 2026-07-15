@@ -74,6 +74,7 @@ class _PitcherGameScreenState extends State<PitcherGameScreen>
     if (_doubleJudgment == null) _loadDoubleJudgment();
     _subscribeGameTopic();
     _ws.refreshResultTopicSubscription(widget.matchSessionId);
+    _ws.ensureEndTopicSubscription(widget.matchSessionId);
     _fetchCoordinateCards();
   }
 

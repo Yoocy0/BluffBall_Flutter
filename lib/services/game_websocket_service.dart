@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/material.dart';
 import 'package:stomp_dart_client/stomp_dart_client.dart';
 import '../core/api_client.dart';
 import '../models/batter_card_select_request.dart';
@@ -8,6 +9,9 @@ import '../models/pitcher_card_select_request.dart';
 import '../models/pitcher_ready_event.dart';
 import '../models/setup_number_request.dart';
 import '../models/turn_result_event.dart';
+import '../navigation/app_navigator.dart';
+import '../screens/game_over_screen.dart';
+import '../screens/home_screen.dart';
 import 'game_flow_controller.dart';
 
 const _kStompPath = '/ws/websocket';
@@ -32,7 +36,9 @@ class GameWebSocketService {
   StompClient? _client;
   StompUnsubscribe? _gameTopicUnsub;
   StompUnsubscribe? _resultTopicUnsub;
+  StompUnsubscribe? _endTopicUnsub;
   String? _resultMatchSessionId;
+  String? _endMatchSessionId;
   String? _gameTopicMatchSessionId;
   int? _gameTopicUserId;
   String? _lastAccessToken;
@@ -65,6 +71,8 @@ class GameWebSocketService {
     _gameTopicUnsub = null;
     _resultTopicUnsub?.call();
     _resultTopicUnsub = null;
+    _endTopicUnsub?.call();
+    _endTopicUnsub = null;
     _client?.deactivate();
 
     final url = '${ApiClient.wsBaseUrl}$_kStompPath';
@@ -89,6 +97,7 @@ class GameWebSocketService {
         onDisconnect: (_) {
           _gameTopicUnsub = null;
           _resultTopicUnsub = null;
+          _endTopicUnsub = null;
         },
         onStompError: (frame) => _onErrorCallback?.call(
           frame.body?.isNotEmpty == true ? frame.body! : 'STOMP 오류',
@@ -135,6 +144,21 @@ class GameWebSocketService {
         _resultMatchSessionId ?? GameFlowController.instance.session?.matchSessionId;
     if (resultId != null && resultId.isNotEmpty) {
       refreshResultTopicSubscription(resultId);
+    }
+
+    final endId = _endMatchSessionId ?? resultId;
+    if (endId != null && endId.isNotEmpty) {
+      ensureEndTopicSubscription(endId);
+    }
+  }
+
+  /// 재접속 준비 — 토픽 ID를 미리 등록해 onConnect 시 재구독되게 합니다.
+  void primeReconnectTopics({required String matchSessionId}) {
+    _resultMatchSessionId = matchSessionId;
+    _endMatchSessionId = matchSessionId;
+    if (isConnected) {
+      refreshResultTopicSubscription(matchSessionId);
+      ensureEndTopicSubscription(matchSessionId);
     }
   }
 
@@ -384,6 +408,104 @@ class GameWebSocketService {
     ensureResultTopicSubscription(matchSessionId);
   }
 
+  /// 경기 종료 토픽 STOMP 구독을 보장합니다.
+  void ensureEndTopicSubscription(String matchSessionId) {
+    _endMatchSessionId = matchSessionId;
+    if (!isConnected) {
+      // ignore: avoid_print
+      print('[WS] ⚠️ ensureEndTopicSubscription: WS 미연결 (pending=$matchSessionId)');
+      return;
+    }
+    if (_endTopicUnsub != null && _endMatchSessionId == matchSessionId) {
+      return;
+    }
+
+    _endTopicUnsub?.call();
+
+    final destination = '$_kGameTopic$matchSessionId/end';
+    // ignore: avoid_print
+    print('[WS] ensureEndTopicSubscription → $destination');
+
+    _endTopicUnsub = _client?.subscribe(
+      destination: destination,
+      callback: _handleEndTopicFrame,
+    );
+  }
+
+  void _handleEndTopicFrame(StompFrame frame) {
+    final body = frame.body;
+    // ignore: avoid_print
+    print('[WS] 경기 종료 수신 raw: $body');
+    _navigateToGameEndFromPayload(body);
+  }
+
+  void _navigateToGameEndFromPayload(String? body) {
+    final nav = rootNavigatorKey.currentState;
+    final ctx = GameFlowController.instance.session;
+    if (nav == null) return;
+
+    final gameMode = ctx?.gameMode;
+    final myUserId = ctx?.currentUserId;
+    var homeScore = 0;
+    var awayScore = 0;
+    var isHomeTeam = true;
+    final participants = <int>[];
+
+    if (body != null && body.isNotEmpty) {
+      try {
+        final json = jsonDecode(body) as Map<String, dynamic>;
+        final board = json['board'] as Map<String, dynamic>?;
+        if (board != null) {
+          homeScore = (board['homeScore'] as num?)?.toInt() ?? 0;
+          awayScore = (board['awayScore'] as num?)?.toInt() ?? 0;
+        } else {
+          homeScore = (json['homeScore'] as num?)?.toInt() ?? 0;
+          awayScore = (json['awayScore'] as num?)?.toInt() ?? 0;
+        }
+        final ids = json['participantUserIds'];
+        if (ids is List) {
+          participants.addAll(ids.map((e) => (e as num).toInt()));
+        }
+        final payloadUserId = (json['myUserId'] as num?)?.toInt();
+        if (participants.length >= 2) {
+          final uid = payloadUserId ?? myUserId;
+          if (uid != null) isHomeTeam = uid == participants.first;
+        }
+      } catch (_) {}
+    }
+
+    disconnect();
+
+    if (ctx == null || gameMode == null || myUserId == null) {
+      nav.pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        (_) => false,
+      );
+      return;
+    }
+
+    final myScore = isHomeTeam ? homeScore : awayScore;
+    final opponentScore = isHomeTeam ? awayScore : homeScore;
+
+    nav.pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) => GameOverScreen(
+          gameMode: gameMode,
+          myScore: myScore,
+          opponentScore: opponentScore,
+          didWin: myScore > opponentScore,
+        ),
+      ),
+      (_) => false,
+    );
+  }
+
+  void refreshEndTopicSubscription(String matchSessionId) {
+    _endTopicUnsub?.call();
+    _endTopicUnsub = null;
+    ensureEndTopicSubscription(matchSessionId);
+  }
+
   void unsubscribeResultTopic() {
     _resultTopicUnsub?.call();
     _resultTopicUnsub = null;
@@ -404,6 +526,9 @@ class GameWebSocketService {
     _resultTopicUnsub?.call();
     _resultTopicUnsub = null;
     _resultMatchSessionId = null;
+    _endTopicUnsub?.call();
+    _endTopicUnsub = null;
+    _endMatchSessionId = null;
     GameFlowController.instance.clearSession();
     _lastAccessToken = null;
     _onConnectedCallback = null;

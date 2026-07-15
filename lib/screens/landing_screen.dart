@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import '../services/token_storage.dart';
 import '../widgets/game_background.dart';
 import '../widgets/bluffball_logo.dart';
+import 'home_screen.dart';
 import 'login_screen.dart';
 
 class LandingScreen extends StatefulWidget {
@@ -31,18 +33,19 @@ class _LandingScreenState extends State<LandingScreen>
 
     _animationController.forward();
 
-    Future.delayed(const Duration(milliseconds: 2800), () {
-      if (mounted) {
-        Navigator.of(context).pushReplacement(
-          PageRouteBuilder(
-            pageBuilder: (context, animation, secondaryAnimation) =>
-                const LoginScreen(),
-            transitionsBuilder: (context, animation, secondaryAnimation, child) =>
-                FadeTransition(opacity: animation, child: child),
-            transitionDuration: const Duration(milliseconds: 500),
-          ),
-        );
-      }
+    Future.delayed(const Duration(milliseconds: 2800), () async {
+      if (!mounted) return;
+      final hasSession = await TokenStorage().hasTokens();
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) =>
+              hasSession ? const HomeScreen() : const LoginScreen(),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+              FadeTransition(opacity: animation, child: child),
+          transitionDuration: const Duration(milliseconds: 500),
+        ),
+      );
     });
   }
 

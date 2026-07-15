@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/auth_service.dart';
 import '../services/match_service.dart';
+import '../services/match_session_storage.dart';
+import '../services/game_session_restore_service.dart';
+import '../models/game_session_state_exception.dart';
 import '../widgets/board_game_box.dart';
 import 'login_screen.dart';
 import 'match_found_screen.dart';
@@ -117,8 +120,70 @@ class _HomeScreenState extends State<HomeScreen> {
   int _navIndex = 2;     // 기본: 경기
   int _prevNavIndex = 2;
   bool _singleModeLoading = false;
+  bool _restoreInProgress = false;
+  SavedMatchSession? _pendingMatchSession;
 
   final _matchService = MatchService();
+  final _restoreService = GameSessionRestoreService();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkPendingMatch());
+  }
+
+  Future<void> _checkPendingMatch() async {
+    final saved = await MatchSessionCoordinator.tryRestore();
+    if (!mounted || saved == null) return;
+    setState(() => _pendingMatchSession = saved);
+  }
+
+  Future<void> _reconnectToMatch() async {
+    final saved = _pendingMatchSession;
+    if (saved == null || _restoreInProgress) return;
+
+    setState(() => _restoreInProgress = true);
+    try {
+      final page = await _restoreService.buildRestorePage(saved.matchSessionId);
+      if (!mounted) return;
+      if (page == null) {
+        await MatchSessionCoordinator.onSessionEnd();
+        setState(() => _pendingMatchSession = null);
+        return;
+      }
+
+      Navigator.of(context).push(PageRouteBuilder(
+        pageBuilder: (_, __, ___) => page,
+        transitionsBuilder: (_, anim, __, child) =>
+            FadeTransition(opacity: anim, child: child),
+        transitionDuration: const Duration(milliseconds: 400),
+      ));
+    } on GameSessionStateException catch (e) {
+      if (e.shouldClearLocalSession) {
+        await MatchSessionCoordinator.onSessionEnd();
+        if (mounted) setState(() => _pendingMatchSession = null);
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.message),
+            backgroundColor: const Color(0xFF3A1A05),
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('게임 복원에 실패했습니다.'),
+            backgroundColor: Color(0xFF3A1A05),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _restoreInProgress = false);
+    }
+  }
 
   void _onNavTap(int index) {
     if (index == _navIndex) return;
@@ -147,6 +212,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
+            if (_restoreInProgress)
+              Container(
+                color: Colors.black.withValues(alpha: 0.45),
+                child: const Center(
+                  child: CircularProgressIndicator(color: Colors.white),
+                ),
+              ),
           ],
         ),
       ),
@@ -210,6 +282,10 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (_pendingMatchSession != null) ...[
+            _buildPendingMatchBanner(),
+            const SizedBox(height: 10),
+          ],
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: Row(
@@ -251,6 +327,69 @@ class _HomeScreenState extends State<HomeScreen> {
               shadowColor: const Color(0xFF2A5010),
             )),
           ]),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPendingMatchBanner() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2A3518),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _kGold.withValues(alpha: 0.45)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.25),
+            offset: const Offset(0, 3),
+            blurRadius: 8,
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.sports_baseball_rounded, color: _kGold, size: 20),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '진행 중인 매치가 있습니다',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            height: 42,
+            child: ElevatedButton(
+              onPressed: _restoreInProgress ? null : _reconnectToMatch,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _kGold,
+                foregroundColor: const Color(0xFF2A1F05),
+                disabledBackgroundColor: _kGold.withValues(alpha: 0.45),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                elevation: 0,
+              ),
+              child: Text(
+                _restoreInProgress ? '재접속 중...' : '재접속',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -446,10 +585,16 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_singleModeLoading) return;
     setState(() => _singleModeLoading = true);
     try {
+      await MatchSessionCoordinator.onQueueJoin();
       final result = await _matchService.joinQueue();
       if (!mounted) return;
 
       if (result.isMatched) {
+        await MatchSessionCoordinator.onMatchFound(
+          matchSessionId: result.matchSessionId,
+          gameMode: GameMode.single,
+        );
+        if (!mounted) return;
         // 즉시 매칭 → 매칭 완료 화면으로 바로 이동
         Navigator.of(context).push(PageRouteBuilder(
           pageBuilder: (_, __, ___) => MatchFoundScreen(

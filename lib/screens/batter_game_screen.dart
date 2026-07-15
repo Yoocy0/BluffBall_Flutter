@@ -49,6 +49,9 @@ class BatterGameScreen extends StatefulWidget {
   final int initialPitcherUserId;
   final TurnResultEvent? lastResultEvent;
 
+  /// 재접속 시 서버 turn.startCoordinateNumber (BATTER_SELECT phase).
+  final int? restoredStartCoordinateNumber;
+
   const BatterGameScreen({
     super.key,
     required this.gameMode,
@@ -59,6 +62,7 @@ class BatterGameScreen extends StatefulWidget {
     this.setupNumbers = const {},
     this.doubleJudgment,
     this.lastResultEvent,
+    this.restoredStartCoordinateNumber,
   });
 
   @override
@@ -108,6 +112,18 @@ class _BatterGameScreenState extends State<BatterGameScreen>
     _fetchCoordinateCards();
     _subscribeToGameTopic();
     _ws.refreshResultTopicSubscription(widget.matchSessionId);
+    _ws.ensureEndTopicSubscription(widget.matchSessionId);
+    _restoreBatterTurnIfNeeded();
+  }
+
+  void _restoreBatterTurnIfNeeded() {
+    final startCoord = widget.restoredStartCoordinateNumber;
+    if (startCoord == null || startCoord <= 0) return;
+    _pitcherStartCoord = startCoord;
+    _pitcherReadyAt = DateTime.now();
+    _remainingSec = _kTimerMax;
+    _phase = _BatterPhase.active;
+    _startCountdown();
   }
 
   @override
