@@ -103,6 +103,9 @@ class GameFlowController {
       _pendingResult = event;
       return;
     }
+    if (event.gameOver) {
+      GameWebSocketService.instance.markGameEndHandled();
+    }
     _navigateToTurnResult(nav, event);
   }
 
@@ -157,7 +160,7 @@ class GameFlowController {
           didWin: myScore > opponentScore,
         ),
       ));
-      clearSession();
+      Future.microtask(GameWebSocketService.instance.disconnect);
       return;
     }
 

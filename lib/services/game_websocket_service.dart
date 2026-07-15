@@ -1,20 +1,25 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:stomp_dart_client/stomp_dart_client.dart';
 import '../core/api_client.dart';
 import '../models/batter_card_select_request.dart';
 import '../models/card_hand_event.dart';
+import '../models/game_end_event.dart';
 import '../models/mulligan_request.dart';
 import '../models/pitcher_card_select_request.dart';
 import '../models/pitcher_ready_event.dart';
+import '../models/presence_event.dart';
 import '../models/setup_number_request.dart';
 import '../models/turn_result_event.dart';
 import '../navigation/app_navigator.dart';
 import '../screens/game_over_screen.dart';
 import '../screens/home_screen.dart';
 import 'game_flow_controller.dart';
+import 'game_presence_controller.dart';
 
 const _kStompPath = '/ws/websocket';
+const _kHeartbeatInterval = Duration(seconds: 20);
 
 /// 게임 브로드캐스트 토픽 prefix
 const _kGameTopic = '/topic/game/';
@@ -37,8 +42,14 @@ class GameWebSocketService {
   StompUnsubscribe? _gameTopicUnsub;
   StompUnsubscribe? _resultTopicUnsub;
   StompUnsubscribe? _endTopicUnsub;
+  StompUnsubscribe? _presenceTopicUnsub;
   String? _resultMatchSessionId;
   String? _endMatchSessionId;
+  String? _presenceMatchSessionId;
+  String? _heartbeatMatchSessionId;
+  Timer? _heartbeatTimer;
+  Timer? _pendingGameEndTimer;
+  bool _gameEndHandled = false;
   String? _gameTopicMatchSessionId;
   int? _gameTopicUserId;
   String? _lastAccessToken;
@@ -55,6 +66,39 @@ class GameWebSocketService {
 
   bool get isConnected => _client?.connected ?? false;
 
+  /// TurnResult(gameOver) 흐름이 종료 화면을 처리했음을 표시합니다.
+  void markGameEndHandled() {
+    _gameEndHandled = true;
+    _pendingGameEndTimer?.cancel();
+    _pendingGameEndTimer = null;
+  }
+
+  void _resetGameEndState() {
+    _gameEndHandled = false;
+    _pendingGameEndTimer?.cancel();
+    _pendingGameEndTimer = null;
+  }
+
+  /// JWT로 WS 연결 완료까지 대기 (재접속 복원용).
+  Future<void> connectAndWait({required String accessToken}) async {
+    if (isConnected && _lastAccessToken == accessToken) return;
+
+    final completer = Completer<void>();
+    connect(
+      accessToken: accessToken,
+      onConnected: () {
+        if (!completer.isCompleted) completer.complete();
+      },
+      onError: (msg) {
+        if (!completer.isCompleted) completer.completeError(msg);
+      },
+    );
+    await completer.future.timeout(
+      const Duration(seconds: 12),
+      onTimeout: () => throw TimeoutException('WebSocket 연결 시간 초과'),
+    );
+  }
+
   // ── connect ──────────────────────────────────────────────────────────────
 
   void connect({
@@ -62,6 +106,7 @@ class GameWebSocketService {
     required void Function() onConnected,
     required void Function(String message) onError,
   }) {
+    _resetGameEndState();
     _lastAccessToken = accessToken;
     _onConnectedCallback = onConnected;
     _onErrorCallback = onError;
@@ -73,6 +118,9 @@ class GameWebSocketService {
     _resultTopicUnsub = null;
     _endTopicUnsub?.call();
     _endTopicUnsub = null;
+    _presenceTopicUnsub?.call();
+    _presenceTopicUnsub = null;
+    _stopPresenceHeartbeat();
     _client?.deactivate();
 
     final url = '${ApiClient.wsBaseUrl}$_kStompPath';
@@ -98,6 +146,8 @@ class GameWebSocketService {
           _gameTopicUnsub = null;
           _resultTopicUnsub = null;
           _endTopicUnsub = null;
+          _presenceTopicUnsub = null;
+          _stopPresenceHeartbeat();
         },
         onStompError: (frame) => _onErrorCallback?.call(
           frame.body?.isNotEmpty == true ? frame.body! : 'STOMP 오류',
@@ -150,16 +200,30 @@ class GameWebSocketService {
     if (endId != null && endId.isNotEmpty) {
       ensureEndTopicSubscription(endId);
     }
+
+    final presenceId = _presenceMatchSessionId ?? endId;
+    if (presenceId != null && presenceId.isNotEmpty) {
+      ensurePresenceTopicSubscription(presenceId);
+      startPresenceHeartbeat(presenceId);
+    }
+  }
+
+  /// 매치 진입 시 presence/end/result 구독 + heartbeat 시작.
+  void bootstrapMatchSession(String matchSessionId) {
+    _resultMatchSessionId = matchSessionId;
+    _endMatchSessionId = matchSessionId;
+    _presenceMatchSessionId = matchSessionId;
+    if (isConnected) {
+      refreshResultTopicSubscription(matchSessionId);
+      ensureEndTopicSubscription(matchSessionId);
+      ensurePresenceTopicSubscription(matchSessionId);
+      startPresenceHeartbeat(matchSessionId);
+    }
   }
 
   /// 재접속 준비 — 토픽 ID를 미리 등록해 onConnect 시 재구독되게 합니다.
   void primeReconnectTopics({required String matchSessionId}) {
-    _resultMatchSessionId = matchSessionId;
-    _endMatchSessionId = matchSessionId;
-    if (isConnected) {
-      refreshResultTopicSubscription(matchSessionId);
-      ensureEndTopicSubscription(matchSessionId);
-    }
+    bootstrapMatchSession(matchSessionId);
   }
 
   // ── Phase 2: 셋업 숫자 ────────────────────────────────────────────────────
@@ -436,10 +500,87 @@ class GameWebSocketService {
     final body = frame.body;
     // ignore: avoid_print
     print('[WS] 경기 종료 수신 raw: $body');
-    _navigateToGameEndFromPayload(body);
+    if (body == null || body.isEmpty) return;
+    try {
+      final json = jsonDecode(body) as Map<String, dynamic>;
+      final event = GameEndEvent.fromJson(json);
+      _scheduleGameEndNavigation(() => _navigateToGameEnd(event), event);
+    } catch (e) {
+      // ignore: avoid_print
+      print('[WS] GameEndEvent 파싱 실패, raw payload 사용: $e');
+      _scheduleGameEndNavigation(
+        () => _navigateToGameEndFromPayload(body),
+        null,
+      );
+    }
+  }
+
+  /// /result 턴 결과가 먼저 도착할 시간을 주고, 미처리 시 /end 로 GameOver 로 폴백합니다.
+  void _scheduleGameEndNavigation(
+    void Function() navigate,
+    GameEndEvent? event,
+  ) {
+    if (_gameEndHandled) return;
+
+    final hasActiveSession = GameFlowController.instance.session != null;
+    final immediate = event?.isForfeit == true || !hasActiveSession;
+
+    if (immediate) {
+      navigate();
+      return;
+    }
+
+    _pendingGameEndTimer?.cancel();
+    _pendingGameEndTimer = Timer(const Duration(seconds: 4), () {
+      if (!_gameEndHandled) navigate();
+    });
+  }
+
+  void _navigateToGameEnd(GameEndEvent event) {
+    if (_gameEndHandled) return;
+    _gameEndHandled = true;
+    _pendingGameEndTimer?.cancel();
+    _pendingGameEndTimer = null;
+
+    final nav = rootNavigatorKey.currentState;
+    final ctx = GameFlowController.instance.session;
+    if (nav == null) return;
+
+    final gameMode = event.gameMode ?? ctx?.gameMode;
+    final myUserId = ctx?.currentUserId;
+
+    if (gameMode == null || myUserId == null) {
+      nav.pushReplacement(
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
+      );
+      Future.microtask(disconnect);
+      return;
+    }
+
+    final myScore = event.scoreForUser(myUserId);
+    final opponentScore = event.opponentScoreForUser(myUserId);
+
+    nav.pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => GameOverScreen(
+          gameMode: gameMode,
+          myScore: myScore,
+          opponentScore: opponentScore,
+          didWin: myScore > opponentScore,
+          endReason: event.reason,
+          isForfeit: event.isForfeit,
+        ),
+      ),
+    );
+    Future.microtask(disconnect);
   }
 
   void _navigateToGameEndFromPayload(String? body) {
+    if (_gameEndHandled) return;
+    _gameEndHandled = true;
+    _pendingGameEndTimer?.cancel();
+    _pendingGameEndTimer = null;
+
     final nav = rootNavigatorKey.currentState;
     final ctx = GameFlowController.instance.session;
     if (nav == null) return;
@@ -474,20 +615,18 @@ class GameWebSocketService {
       } catch (_) {}
     }
 
-    disconnect();
-
     if (ctx == null || gameMode == null || myUserId == null) {
-      nav.pushAndRemoveUntil(
+      nav.pushReplacement(
         MaterialPageRoute(builder: (_) => const HomeScreen()),
-        (_) => false,
       );
+      Future.microtask(disconnect);
       return;
     }
 
     final myScore = isHomeTeam ? homeScore : awayScore;
     final opponentScore = isHomeTeam ? awayScore : homeScore;
 
-    nav.pushAndRemoveUntil(
+    nav.pushReplacement(
       MaterialPageRoute(
         builder: (_) => GameOverScreen(
           gameMode: gameMode,
@@ -496,14 +635,91 @@ class GameWebSocketService {
           didWin: myScore > opponentScore,
         ),
       ),
-      (_) => false,
     );
+    Future.microtask(disconnect);
   }
 
   void refreshEndTopicSubscription(String matchSessionId) {
     _endTopicUnsub?.call();
     _endTopicUnsub = null;
     ensureEndTopicSubscription(matchSessionId);
+  }
+
+  // ── presence 토픽 (/topic/game/{id}/presence) ─────────────────────────────
+
+  void ensurePresenceTopicSubscription(String matchSessionId) {
+    _presenceMatchSessionId = matchSessionId;
+    if (!isConnected) {
+      // ignore: avoid_print
+      print('[WS] ⚠️ ensurePresenceTopicSubscription: WS 미연결 (pending=$matchSessionId)');
+      return;
+    }
+    if (_presenceTopicUnsub != null &&
+        _presenceMatchSessionId == matchSessionId) {
+      return;
+    }
+
+    _presenceTopicUnsub?.call();
+
+    final destination = '$_kGameTopic$matchSessionId/presence';
+    // ignore: avoid_print
+    print('[WS] ensurePresenceTopicSubscription → $destination');
+
+    _presenceTopicUnsub = _client?.subscribe(
+      destination: destination,
+      callback: _handlePresenceTopicFrame,
+    );
+  }
+
+  void _handlePresenceTopicFrame(StompFrame frame) {
+    final body = frame.body;
+    // ignore: avoid_print
+    print('[WS] presence 수신 raw: $body');
+    if (body == null || body.isEmpty) return;
+    try {
+      final json = jsonDecode(body) as Map<String, dynamic>;
+      final event = parsePresenceEvent(json);
+      if (event != null) {
+        GamePresenceController.instance.handlePresenceEvent(event);
+      }
+    } catch (e) {
+      // ignore: avoid_print
+      print('[WS] ⚠️ presence 파싱 오류: $e / body=$body');
+    }
+  }
+
+  void refreshPresenceTopicSubscription(String matchSessionId) {
+    _presenceTopicUnsub?.call();
+    _presenceTopicUnsub = null;
+    ensurePresenceTopicSubscription(matchSessionId);
+  }
+
+  // ── heartbeat (/app/game/{id}/presence/heartbeat) ─────────────────────────
+
+  void startPresenceHeartbeat(String matchSessionId) {
+    _heartbeatMatchSessionId = matchSessionId;
+    _heartbeatTimer?.cancel();
+    sendPresenceHeartbeat(matchSessionId);
+    _heartbeatTimer = Timer.periodic(_kHeartbeatInterval, (_) {
+      final id = _heartbeatMatchSessionId;
+      if (id != null && isConnected) sendPresenceHeartbeat(id);
+    });
+  }
+
+  void _stopPresenceHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+    _heartbeatMatchSessionId = null;
+  }
+
+  bool sendPresenceHeartbeat(String matchSessionId) {
+    if (!isConnected) return false;
+    _client!.send(
+      destination: '/app/game/$matchSessionId/presence/heartbeat',
+      body: '{}',
+      headers: {'content-type': 'application/json'},
+    );
+    return true;
   }
 
   void unsubscribeResultTopic() {
@@ -515,6 +731,10 @@ class GameWebSocketService {
   // ── disconnect ────────────────────────────────────────────────────────────
 
   void disconnect() {
+    _pendingGameEndTimer?.cancel();
+    _pendingGameEndTimer = null;
+    _stopPresenceHeartbeat();
+    GamePresenceController.instance.clear();
     _gameTopicUnsub?.call();
     _gameTopicUnsub = null;
     _gameTopicMatchSessionId = null;
@@ -529,6 +749,9 @@ class GameWebSocketService {
     _endTopicUnsub?.call();
     _endTopicUnsub = null;
     _endMatchSessionId = null;
+    _presenceTopicUnsub?.call();
+    _presenceTopicUnsub = null;
+    _presenceMatchSessionId = null;
     GameFlowController.instance.clearSession();
     _lastAccessToken = null;
     _onConnectedCallback = null;

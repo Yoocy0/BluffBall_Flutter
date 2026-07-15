@@ -10,6 +10,7 @@ import '../services/game_websocket_service.dart';
 import '../services/match_service.dart';
 import '../services/token_storage.dart';
 import '../widgets/mode_background.dart';
+import '../widgets/opponent_disconnected_overlay.dart';
 import '../widgets/setup_numbers_summary.dart';
 import 'double_judgment_reveal_screen.dart';
 
@@ -183,6 +184,7 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
       onAllReady: _handleAllReady,
     );
     _consumeBufferedCardHandIfAny();
+    _ws.bootstrapMatchSession(widget.matchSessionId);
   }
 
   void _consumeBufferedCardHandIfAny() {
@@ -412,7 +414,10 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
       child: Scaffold(
-        body: Stack(children: [
+        body: InGamePresenceShell(
+          matchSessionId: widget.matchSessionId,
+          gameMode: widget.gameMode,
+          child: Stack(children: [
           ModeBackground(mode: widget.gameMode),
           SafeArea(
             child: Column(children: [
@@ -435,6 +440,7 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
             ]),
           ),
         ]),
+        ),
       ),
     );
   }

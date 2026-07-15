@@ -9,6 +9,7 @@ import '../services/match_service.dart';
 import '../services/match_session_storage.dart';
 import '../services/token_storage.dart';
 import '../widgets/board_game_box.dart';
+import '../widgets/exit_confirm_dialogs.dart';
 import 'match_found_screen.dart';
 import '../models/game_mode.dart';
 
@@ -191,10 +192,19 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
 
   @override
   Widget build(BuildContext context) {
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle.light,
-      child: Scaffold(
-        body: Stack(children: [
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop || _isCancelling) return;
+        final cancel = await showMatchmakingCancelConfirmDialog(context);
+        if (cancel == true) {
+          await _onCancel();
+        }
+      },
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: SystemUiOverlayStyle.light,
+        child: Scaffold(
+          body: Stack(children: [
           SizedBox.expand(child: CustomPaint(painter: _BgPainter())),
           SafeArea(
             child: Column(children: [
@@ -225,6 +235,7 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
             ]),
           ),
         ]),
+        ),
       ),
     );
   }

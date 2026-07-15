@@ -6,6 +6,7 @@ import '../services/match_session_storage.dart';
 import '../services/game_session_restore_service.dart';
 import '../models/game_session_state_exception.dart';
 import '../widgets/board_game_box.dart';
+import '../widgets/exit_confirm_dialogs.dart';
 import 'login_screen.dart';
 import 'match_found_screen.dart';
 import 'matchmaking_screen.dart';
@@ -116,11 +117,12 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _navIndex = 2;     // 기본: 경기
   int _prevNavIndex = 2;
   bool _singleModeLoading = false;
   bool _restoreInProgress = false;
+  bool _reconnectDialogVisible = false;
   SavedMatchSession? _pendingMatchSession;
 
   final _matchService = MatchService();
@@ -129,17 +131,102 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkPendingMatch());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkPendingMatch();
+    }
   }
 
   Future<void> _checkPendingMatch() async {
     final saved = await MatchSessionCoordinator.tryRestore();
     if (!mounted || saved == null) return;
-    setState(() => _pendingMatchSession = saved);
+    _pendingMatchSession = saved;
+    if (_reconnectDialogVisible || _restoreInProgress) return;
+    await _showReconnectDialog(saved);
   }
 
-  Future<void> _reconnectToMatch() async {
-    final saved = _pendingMatchSession;
+  Future<void> _showReconnectDialog(SavedMatchSession saved) async {
+    _reconnectDialogVisible = true;
+    try {
+      final reconnect = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF2A3518),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: _kGold.withValues(alpha: 0.45)),
+          ),
+          icon: Icon(
+            Icons.sports_baseball_rounded,
+            color: _kGold.withValues(alpha: 0.9),
+            size: 32,
+          ),
+          title: const Text(
+            '진행 중인 매치가 있습니다',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          content: const Text(
+            '중단된 경기를 이어서 진행할 수 있습니다.',
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: 14,
+              height: 1.4,
+            ),
+          ),
+          actionsAlignment: MainAxisAlignment.center,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text(
+                '나중에',
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: _kGold,
+                foregroundColor: const Color(0xFF2A1F05),
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: const Text(
+                '재접속',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ],
+        ),
+      );
+
+      if (!mounted || reconnect != true) return;
+      await _reconnectToMatch(saved);
+    } finally {
+      _reconnectDialogVisible = false;
+    }
+  }
+
+  Future<void> _reconnectToMatch([SavedMatchSession? session]) async {
+    final saved = session ?? _pendingMatchSession;
     if (saved == null || _restoreInProgress) return;
 
     setState(() => _restoreInProgress = true);
@@ -171,12 +258,23 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       }
-    } catch (_) {
+    } on StateError catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('게임 복원에 실패했습니다.'),
-            backgroundColor: Color(0xFF3A1A05),
+          SnackBar(
+            content: Text(e.message),
+            backgroundColor: const Color(0xFF3A1A05),
+          ),
+        );
+      }
+    } catch (e) {
+      // ignore: avoid_print
+      print('[Restore] 실패: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('게임 복원에 실패했습니다. ($e)'),
+            backgroundColor: const Color(0xFF3A1A05),
           ),
         );
       }
@@ -195,31 +293,41 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle.light,
-      child: Scaffold(
-        body: Stack(
-          children: [
-            const _HomeBackground(),
-            SafeArea(
-              child: Column(
-                children: [
-                  _buildTopBar(),
-                  Expanded(child: _buildMainContent()),
-                  _buildBottomButtons(),
-                  if (_navIndex == 2 || _navIndex == 3) const SizedBox(height: 8),
-                  _buildBottomNav(),
-                ],
-              ),
-            ),
-            if (_restoreInProgress)
-              Container(
-                color: Colors.black.withValues(alpha: 0.45),
-                child: const Center(
-                  child: CircularProgressIndicator(color: Colors.white),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        final exit = await showAppExitConfirmDialog(context);
+        if (exit == true) {
+          SystemNavigator.pop();
+        }
+      },
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: SystemUiOverlayStyle.light,
+        child: Scaffold(
+          body: Stack(
+            children: [
+              const _HomeBackground(),
+              SafeArea(
+                child: Column(
+                  children: [
+                    _buildTopBar(),
+                    Expanded(child: _buildMainContent()),
+                    _buildBottomButtons(),
+                    if (_navIndex == 2 || _navIndex == 3) const SizedBox(height: 8),
+                    _buildBottomNav(),
+                  ],
                 ),
               ),
-          ],
+              if (_restoreInProgress)
+                Container(
+                  color: Colors.black.withValues(alpha: 0.45),
+                  child: const Center(
+                    child: CircularProgressIndicator(color: Colors.white),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -282,10 +390,6 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (_pendingMatchSession != null) ...[
-            _buildPendingMatchBanner(),
-            const SizedBox(height: 10),
-          ],
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: Row(
@@ -327,69 +431,6 @@ class _HomeScreenState extends State<HomeScreen> {
               shadowColor: const Color(0xFF2A5010),
             )),
           ]),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPendingMatchBanner() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        color: const Color(0xFF2A3518),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _kGold.withValues(alpha: 0.45)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.25),
-            offset: const Offset(0, 3),
-            blurRadius: 8,
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.sports_baseball_rounded, color: _kGold, size: 20),
-              SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '진행 중인 매치가 있습니다',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            height: 42,
-            child: ElevatedButton(
-              onPressed: _restoreInProgress ? null : _reconnectToMatch,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _kGold,
-                foregroundColor: const Color(0xFF2A1F05),
-                disabledBackgroundColor: _kGold.withValues(alpha: 0.45),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                elevation: 0,
-              ),
-              child: Text(
-                _restoreInProgress ? '재접속 중...' : '재접속',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-          ),
         ],
       ),
     );

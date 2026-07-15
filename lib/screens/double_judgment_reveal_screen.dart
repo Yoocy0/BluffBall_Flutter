@@ -6,8 +6,10 @@ import '../models/card_info.dart';
 import '../models/double_judgment_config.dart';
 import '../models/game_mode.dart';
 import '../services/game_flow_controller.dart';
+import '../services/game_websocket_service.dart';
 import '../services/game_match_meta_service.dart';
 import '../widgets/dice_widget.dart';
+import '../widgets/opponent_disconnected_overlay.dart';
 import '../widgets/mode_background.dart';
 import 'batter_game_screen.dart';
 import 'pitcher_game_screen.dart';
@@ -84,6 +86,7 @@ class _DoubleJudgmentRevealScreenState extends State<DoubleJudgmentRevealScreen>
     );
 
     _loadConfig();
+    GameWebSocketService.instance.bootstrapMatchSession(widget.matchSessionId);
   }
 
   @override
@@ -186,7 +189,10 @@ class _DoubleJudgmentRevealScreenState extends State<DoubleJudgmentRevealScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Stack(
+      body: InGamePresenceShell(
+        matchSessionId: widget.matchSessionId,
+        gameMode: widget.gameMode,
+        child: Stack(
         fit: StackFit.expand,
         children: [
           ModeBackground(mode: widget.gameMode),
@@ -207,6 +213,7 @@ class _DoubleJudgmentRevealScreenState extends State<DoubleJudgmentRevealScreen>
             ),
           ),
         ],
+      ),
       ),
     );
   }

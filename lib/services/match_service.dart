@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 
 import '../core/api_client.dart';
+import '../models/api_error.dart';
 import '../models/match_join_response.dart';
 import 'token_storage.dart';
 
@@ -31,7 +32,12 @@ class MatchService {
       return MatchJoinResponse.fromJson(response.data as Map<String, dynamic>);
     }
 
-    throw MatchException(_messageForStatus(response.statusCode));
+    final error = ApiError.fromResponse(
+      statusCode: response.statusCode,
+      data: response.data,
+      fallbackMessage: _messageForStatus(response.statusCode),
+    );
+    throw MatchException(error.message, isAuthError: error.isAuthError);
   }
 
   /// 싱글 모드 매칭 큐 취소
@@ -66,7 +72,9 @@ class MatchService {
 
 class MatchException implements Exception {
   final String message;
-  const MatchException(this.message);
+  final bool isAuthError;
+
+  const MatchException(this.message, {this.isAuthError = false});
 
   @override
   String toString() => message;

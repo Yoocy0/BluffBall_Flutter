@@ -12,6 +12,7 @@ import '../services/game_match_meta_service.dart';
 import '../services/game_websocket_service.dart';
 import '../services/token_storage.dart';
 import '../widgets/match_info_overlay.dart';
+import '../widgets/opponent_disconnected_overlay.dart';
 import '../widgets/mode_background.dart';
 import '../widgets/setup_numbers_summary.dart';
 
@@ -73,8 +74,7 @@ class _PitcherGameScreenState extends State<PitcherGameScreen>
     _syncSession();
     if (_doubleJudgment == null) _loadDoubleJudgment();
     _subscribeGameTopic();
-    _ws.refreshResultTopicSubscription(widget.matchSessionId);
-    _ws.ensureEndTopicSubscription(widget.matchSessionId);
+    _ws.bootstrapMatchSession(widget.matchSessionId);
     _fetchCoordinateCards();
   }
 
@@ -202,7 +202,10 @@ class _PitcherGameScreenState extends State<PitcherGameScreen>
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
       child: Scaffold(
-        body: Stack(children: [
+        body: InGamePresenceShell(
+          matchSessionId: widget.matchSessionId,
+          gameMode: widget.gameMode,
+          child: Stack(children: [
           ModeBackground(mode: widget.gameMode),
           SafeArea(
             child: Column(children: [
@@ -232,6 +235,7 @@ class _PitcherGameScreenState extends State<PitcherGameScreen>
           ),
           if (_isWaitingBatter) _buildWaitingOverlay(),
         ]),
+        ),
       ),
     );
   }
