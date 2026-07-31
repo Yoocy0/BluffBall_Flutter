@@ -71,9 +71,9 @@ int? _intOrNull(dynamic value) {
 }
 
 GameMode? _gameModeFromApi(String? value) => switch (value) {
-      'GENERAL' => GameMode.single,
-      'CLAN_GENERAL' => GameMode.teamRegular,
-      'CLAN_MINI' => GameMode.teamMini,
+      'SHOWDOWN' || 'GENERAL' => GameMode.single,
+      'FULL_LEAGUE' || 'CLAN_GENERAL' => GameMode.teamRegular,
+      'COMPACT_LEAGUE' || 'CLAN_MINI' => GameMode.teamMini,
       'CUSTOM' => GameMode.custom,
       _ => null,
     };

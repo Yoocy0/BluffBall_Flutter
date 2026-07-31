@@ -173,6 +173,90 @@ class AuthService {
     }
   }
 
+  // ─── 세션 복원 (앱 시작) ───────────────────────────────────────────────────
+
+  /// 로컬 토큰이 있으면 서버에 유효성을 확인한다.
+  ///
+  /// 1. Access Token으로 `GET /api/v1/users/me` 호출
+  /// 2. 401이면 Refresh Token으로 `POST /api/v1/auth/refresh` 시도
+  /// 3. refresh 성공 시 새 토큰 저장 후 true
+  /// 4. 인증 실패 시 로컬 토큰 삭제 후 false
+  /// 5. 네트워크 오류 시 토큰은 유지하고 false (다음 실행에서 재시도)
+  Future<bool> restoreSession() async {
+    final accessToken = await _tokenStorage.getAccessToken();
+    if (accessToken == null || accessToken.isEmpty) {
+      await _tokenStorage.clear();
+      return false;
+    }
+
+    final accessValid = await _validateAccessToken(accessToken);
+    if (accessValid == true) return true;
+    if (accessValid == null) return false; // 네트워크 등 — 토큰 유지
+
+    // Access Token 만료/무효 → Refresh 시도
+    final refreshed = await _refreshTokens();
+    if (refreshed == true) return true;
+    if (refreshed == null) return false; // 네트워크 등 — 토큰 유지
+
+    await _tokenStorage.clear();
+    return false;
+  }
+
+  /// true: 유효 / false: 401 등 인증 실패 / null: 네트워크·기타
+  Future<bool?> _validateAccessToken(String accessToken) async {
+    try {
+      await _dio.get(
+        '/api/v1/users/me',
+        options: Options(
+          headers: {'Authorization': 'Bearer $accessToken'},
+        ),
+      );
+      return true;
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      if (status == 401 || status == 403) return false;
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// true: 재발급 성공 / false: refresh 무효 / null: 네트워크·기타
+  Future<bool?> _refreshTokens() async {
+    final refreshToken = await _tokenStorage.getRefreshToken();
+    if (refreshToken == null || refreshToken.isEmpty) return false;
+
+    try {
+      final response = await _dio.post(
+        '/api/v1/auth/refresh',
+        data: {'refreshToken': refreshToken},
+      );
+      final data = response.data;
+      if (data is! Map<String, dynamic>) return false;
+
+      final newAccess = data['accessToken'] as String?;
+      final newRefresh = data['refreshToken'] as String?;
+      if (newAccess == null ||
+          newAccess.isEmpty ||
+          newRefresh == null ||
+          newRefresh.isEmpty) {
+        return false;
+      }
+
+      await _tokenStorage.save(
+        accessToken: newAccess,
+        refreshToken: newRefresh,
+      );
+      return true;
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      if (status == 401 || status == 403 || status == 400) return false;
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   // ─── 로그아웃 ────────────────────────────────────────────────────────────────
 
   Future<void> signOut() async {

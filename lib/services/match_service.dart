@@ -73,8 +73,13 @@ class MatchService {
 class MatchException implements Exception {
   final String message;
   final bool isAuthError;
+  final String? code;
 
-  const MatchException(this.message, {this.isAuthError = false});
+  const MatchException(
+    this.message, {
+    this.isAuthError = false,
+    this.code,
+  });
 
   @override
   String toString() => message;

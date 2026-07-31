@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/auth_service.dart';
 import '../services/token_storage.dart';
 import '../widgets/game_background.dart';
 import '../widgets/bluffball_logo.dart';
@@ -16,6 +17,7 @@ class _LandingScreenState extends State<LandingScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
+  bool _checkingSession = false;
 
   @override
   void initState() {
@@ -32,21 +34,43 @@ class _LandingScreenState extends State<LandingScreen>
     );
 
     _animationController.forward();
+    _bootstrap();
+  }
 
-    Future.delayed(const Duration(milliseconds: 2800), () async {
-      if (!mounted) return;
-      final hasSession = await TokenStorage().hasTokens();
-      if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        PageRouteBuilder(
-          pageBuilder: (context, animation, secondaryAnimation) =>
-              hasSession ? const HomeScreen() : const LoginScreen(),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) =>
-              FadeTransition(opacity: animation, child: child),
-          transitionDuration: const Duration(milliseconds: 500),
-        ),
-      );
+  Future<void> _bootstrap() async {
+    final splash = Future<void>.delayed(const Duration(milliseconds: 2800));
+    var sessionResolved = false;
+    final sessionFuture = _resolveSession().whenComplete(() {
+      sessionResolved = true;
     });
+
+    await splash;
+    if (!mounted) return;
+
+    // 스플래시 후에도 서버 확인이 남았으면 안내 표시
+    if (!sessionResolved) {
+      setState(() => _checkingSession = true);
+    }
+
+    final hasValidSession = await sessionFuture;
+    if (!mounted) return;
+
+    Navigator.of(context).pushReplacement(
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            hasValidSession ? const HomeScreen() : const LoginScreen(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+            FadeTransition(opacity: animation, child: child),
+        transitionDuration: const Duration(milliseconds: 500),
+      ),
+    );
+  }
+
+  /// 로컬 토큰이 있으면 서버에 세션 유효성을 확인한다.
+  Future<bool> _resolveSession() async {
+    final hasTokens = await TokenStorage().hasTokens();
+    if (!hasTokens) return false;
+    return AuthService().restoreSession();
   }
 
   @override
@@ -78,6 +102,34 @@ class _LandingScreenState extends State<LandingScreen>
               child: BluffBallLogo(size: logoSize),
             ),
           ),
+
+          if (_checkingSession)
+            const Align(
+              alignment: Alignment(0, 0.35),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: Colors.white70,
+                    ),
+                  ),
+                  SizedBox(height: 12),
+                  Text(
+                    '로그인 확인 중...',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.4,
+                    ),
+                  ),
+                ],
+              ),
+            ),
 
           // AI 생성 이미지 문구
           const Positioned(

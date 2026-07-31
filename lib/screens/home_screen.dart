@@ -4,7 +4,12 @@ import '../services/auth_service.dart';
 import '../services/match_service.dart';
 import '../services/match_session_storage.dart';
 import '../services/game_session_restore_service.dart';
+import '../services/team_service.dart';
+import '../services/league_service.dart';
+import '../services/league_match_service.dart';
+import '../services/token_storage.dart';
 import '../models/game_session_state_exception.dart';
+import '../models/league_enums.dart';
 import '../widgets/board_game_box.dart';
 import '../widgets/exit_confirm_dialogs.dart';
 import 'login_screen.dart';
@@ -22,6 +27,14 @@ const _kPanelBg = Color(0xFF242F12);
 const _kPanelBorder = Color(0xFF5A6E30);
 
 // ─── 데이터 모델 ─────────────────────────────────────────────────────────────
+
+enum _GameStartMode { showdown, leagueCompact, leagueFull }
+
+class _LeagueGate {
+  final bool allowed;
+  final String? hint;
+  const _LeagueGate({required this.allowed, this.hint});
+}
 
 class _NavItem {
   final IconData icon;
@@ -127,6 +140,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   final _matchService = MatchService();
   final _restoreService = GameSessionRestoreService();
+  final _teamService = TeamService();
+  final _leagueService = LeagueService();
+  final _leagueMatchService = LeagueMatchService();
 
   @override
   void initState() {
@@ -410,11 +426,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
           Row(children: [
             Expanded(child: _BattleButton(
-              label: _singleModeLoading ? '연결 중...' : '싱글 모드',
+              label: _singleModeLoading ? '연결 중...' : '게임 시작',
               icon: _singleModeLoading
                   ? Icons.hourglass_top_rounded
-                  : Icons.person_rounded,
-              onTap: _singleModeLoading ? () {} : _joinSingleMode,
+                  : Icons.sports_esports_rounded,
+              onTap: _singleModeLoading ? () {} : _showGameStartModes,
               gradient: const LinearGradient(
                 begin: Alignment.topCenter, end: Alignment.bottomCenter,
                 colors: [Color(0xFFF5C542), Color(0xFFD4821A)],
@@ -620,6 +636,256 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       isScrollControlled: true,
       builder: (_) => const _UniformSettingsSheet(),
     );
+  }
+
+  Future<void> _showGameStartModes() async {
+    final canStartLeague = await _canStartLeagueMatch();
+    if (!mounted) return;
+
+    final selected = await showDialog<_GameStartMode>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.55),
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF243018), Color(0xFF1A220E), Color(0xFF2A1A0A)],
+            ),
+            border: Border.all(
+              color: _kGold.withValues(alpha: 0.45),
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.55),
+                blurRadius: 24,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Stack(
+            children: [
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'MODE SELECT',
+                    style: TextStyle(
+                      color: _kGold.withValues(alpha: 0.8),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 3,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    '게임 모드 선택',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  _BattleButton(
+                    label: '쇼다운',
+                    icon: Icons.bolt_rounded,
+                    onTap: () => Navigator.of(ctx).pop(_GameStartMode.showdown),
+                    gradient: const LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Color(0xFFF5C542), Color(0xFFD4821A)],
+                    ),
+                    shadowColor: const Color(0xFF8B5010),
+                  ),
+                  const SizedBox(height: 14),
+                  _BattleButton(
+                    label: '리그전(컴팩트)',
+                    icon: Icons.sports_baseball_rounded,
+                    enabled: canStartLeague.allowed,
+                    onTap: () => Navigator.of(ctx).pop(_GameStartMode.leagueCompact),
+                    gradient: const LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Color(0xFF6BB8E8), Color(0xFF2F6FA8)],
+                    ),
+                    shadowColor: const Color(0xFF1A3A60),
+                  ),
+                  const SizedBox(height: 14),
+                  _BattleButton(
+                    label: '리그전(풀)',
+                    icon: Icons.emoji_events_rounded,
+                    enabled: canStartLeague.allowed,
+                    onTap: () => Navigator.of(ctx).pop(_GameStartMode.leagueFull),
+                    gradient: const LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Color(0xFFE07A4A), Color(0xFFA04020)],
+                    ),
+                    shadowColor: const Color(0xFF5A2010),
+                  ),
+                  if (canStartLeague.hint != null) ...[
+                    const SizedBox(height: 14),
+                    Text(
+                      canStartLeague.hint!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.45),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                ],
+              ),
+              Positioned(
+                top: -6,
+                right: -6,
+                child: IconButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  tooltip: '닫기',
+                  padding: const EdgeInsets.all(8),
+                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                  icon: Icon(
+                    Icons.close_rounded,
+                    size: 22,
+                    color: Colors.white.withValues(alpha: 0.7),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (!mounted || selected == null) return;
+
+    switch (selected) {
+      case _GameStartMode.showdown:
+        await _joinSingleMode();
+      case _GameStartMode.leagueCompact:
+        await _joinLeagueMode(LeagueFormat.compact, GameMode.teamMini);
+      case _GameStartMode.leagueFull:
+        await _joinLeagueMode(LeagueFormat.full, GameMode.teamRegular);
+    }
+  }
+
+  Future<_LeagueGate> _canStartLeagueMatch() async {
+    try {
+      final team = await _teamService.getMyTeam();
+      if (team == null) {
+        return const _LeagueGate(
+          allowed: false,
+          hint: '리그전은 팀 소속 시에만 이용할 수 있습니다',
+        );
+      }
+
+      final token = await TokenStorage().getAccessToken();
+      final userIdStr =
+          token != null ? MatchService.extractUserIdFromJwt(token) : null;
+      final userId = userIdStr != null ? int.tryParse(userIdStr) : null;
+      final isLeader = userId != null && userId == team.leaderUserId;
+      if (!isLeader) {
+        return const _LeagueGate(
+          allowed: false,
+          hint: '리그전 매칭은 팀 리더만 시작할 수 있습니다',
+        );
+      }
+      return const _LeagueGate(allowed: true);
+    } catch (_) {
+      return const _LeagueGate(
+        allowed: false,
+        hint: '팀 정보를 확인할 수 없습니다',
+      );
+    }
+  }
+
+  Future<void> _joinLeagueMode(LeagueFormat format, GameMode gameMode) async {
+    if (_singleModeLoading) return;
+    setState(() => _singleModeLoading = true);
+    try {
+      final tier = await _leagueService.getCurrentTier(format);
+      if (!mounted) return;
+      if (tier == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '${format == LeagueFormat.compact ? '컴팩트' : '풀'} 리그에 먼저 참가해야 합니다.',
+            ),
+            backgroundColor: const Color(0xFF3A1A05),
+          ),
+        );
+        return;
+      }
+
+      await MatchSessionCoordinator.onQueueJoin();
+      final result = await _leagueMatchService.joinQueue(
+        format: format,
+        tier: tier,
+      );
+      if (!mounted) return;
+
+      if (result.isMatched) {
+        await MatchSessionCoordinator.onMatchFound(
+          matchSessionId: result.matchSessionId,
+          gameMode: gameMode,
+        );
+        if (!mounted) return;
+        Navigator.of(context).push(PageRouteBuilder(
+          pageBuilder: (_, __, ___) => MatchFoundScreen(
+            matchSessionId: result.matchSessionId,
+            gameMode: gameMode,
+          ),
+          transitionsBuilder: (_, anim, __, child) =>
+              FadeTransition(opacity: anim, child: child),
+          transitionDuration: const Duration(milliseconds: 350),
+        ));
+      } else {
+        Navigator.of(context).push(PageRouteBuilder(
+          pageBuilder: (_, __, ___) => MatchmakingScreen(
+            gameMode: gameMode,
+            onCancelQueue: _leagueMatchService.cancelQueue,
+          ),
+          transitionDuration: const Duration(milliseconds: 650),
+          reverseTransitionDuration: const Duration(milliseconds: 500),
+          transitionsBuilder: (_, animation, __, child) => FadeTransition(
+            opacity: CurvedAnimation(
+              parent: animation,
+              curve: const Interval(0.35, 1.0, curve: Curves.easeOut),
+            ),
+            child: child,
+          ),
+        ));
+      }
+    } on MatchException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.message),
+            backgroundColor: const Color(0xFF3A1A05),
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('네트워크 오류가 발생했습니다.'),
+            backgroundColor: Color(0xFF3A1A05),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _singleModeLoading = false);
+    }
   }
 
   Future<void> _joinSingleMode() async {
@@ -1404,9 +1670,11 @@ class _BattleButton extends StatefulWidget {
   final VoidCallback onTap;
   final LinearGradient gradient;
   final Color shadowColor;
+  final bool enabled;
   const _BattleButton({
     required this.label, required this.icon, required this.onTap,
     required this.gradient, required this.shadowColor,
+    this.enabled = true,
   });
 
   @override
@@ -1418,36 +1686,61 @@ class _BattleButtonState extends State<_BattleButton> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: (_) => setState(() => _pressed = true),
-      onTapUp: (_) { setState(() => _pressed = false); widget.onTap(); },
-      onTapCancel: () => setState(() => _pressed = false),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 80),
-        height: 58,
-        transform: Matrix4.translationValues(0, _pressed ? 3 : 0, 0),
-        decoration: BoxDecoration(
-          gradient: widget.gradient,
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: _pressed ? [] : [
-            BoxShadow(color: widget.shadowColor.withValues(alpha: 0.9),
-                offset: const Offset(0, 4), blurRadius: 0),
-            BoxShadow(color: Colors.black.withValues(alpha: 0.35),
-                offset: const Offset(0, 6), blurRadius: 10),
-          ],
-          border: Border.all(
-            color: Colors.white.withValues(alpha: 0.15), width: 1,
+    final enabled = widget.enabled;
+
+    return Opacity(
+      opacity: enabled ? 1 : 0.38,
+      child: GestureDetector(
+        onTapDown: enabled ? (_) => setState(() => _pressed = true) : null,
+        onTapUp: enabled
+            ? (_) {
+                setState(() => _pressed = false);
+                widget.onTap();
+              }
+            : null,
+        onTapCancel: enabled ? () => setState(() => _pressed = false) : null,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 80),
+          height: 58,
+          transform: Matrix4.translationValues(0, _pressed ? 3 : 0, 0),
+          decoration: BoxDecoration(
+            gradient: enabled
+                ? widget.gradient
+                : const LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0xFF5A5A5A), Color(0xFF3A3A3A)],
+                  ),
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: (!enabled || _pressed)
+                ? []
+                : [
+                    BoxShadow(
+                      color: widget.shadowColor.withValues(alpha: 0.9),
+                      offset: const Offset(0, 4),
+                      blurRadius: 0,
+                    ),
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.35),
+                      offset: const Offset(0, 6),
+                      blurRadius: 10,
+                    ),
+                  ],
+            border: Border.all(
+              color: Colors.white.withValues(alpha: enabled ? 0.15 : 0.08),
+              width: 1,
+            ),
           ),
+          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Icon(widget.icon, color: Colors.white, size: 22),
+            const SizedBox(width: 8),
+            Text(widget.label, style: const TextStyle(
+              color: Colors.white, fontSize: 15, fontWeight: FontWeight.w900,
+              letterSpacing: 0.5,
+              shadows: [Shadow(color: Colors.black38, offset: Offset(0, 1), blurRadius: 3)],
+            )),
+          ]),
         ),
-        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Icon(widget.icon, color: Colors.white, size: 22),
-          const SizedBox(width: 8),
-          Text(widget.label, style: const TextStyle(
-            color: Colors.white, fontSize: 15, fontWeight: FontWeight.w900,
-            letterSpacing: 0.5,
-            shadows: [Shadow(color: Colors.black38, offset: Offset(0, 1), blurRadius: 3)],
-          )),
-        ]),
       ),
     );
   }

@@ -17,10 +17,13 @@ class MatchmakingScreen extends StatefulWidget {
   final GameMode gameMode;
   /// 실제 매칭 API 연결 시 서버에서 수신한 세션 ID로 교체
   final String matchSessionId;
+  /// 큐 취소 API. null이면 쇼다운 큐 취소를 사용한다.
+  final Future<void> Function()? onCancelQueue;
   const MatchmakingScreen({
     super.key,
     this.gameMode = GameMode.single,
     this.matchSessionId = '',
+    this.onCancelQueue,
   });
 
   @override
@@ -158,7 +161,8 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
     if (_isCancelling) return;
     setState(() => _isCancelling = true);
     _stompClient?.deactivate();
-    await _matchService.cancelQueue();
+    final cancel = widget.onCancelQueue ?? _matchService.cancelQueue;
+    await cancel();
     if (mounted) Navigator.of(context).pop();
   }
 
@@ -167,7 +171,8 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
-      _matchService.cancelQueue();
+      final cancel = widget.onCancelQueue ?? _matchService.cancelQueue;
+      cancel();
       _stompClient?.deactivate();
     }
   }
