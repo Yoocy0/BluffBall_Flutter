@@ -5,9 +5,12 @@ enum GameMode {
   custom;
 
   String get displayName => switch (this) {
-    GameMode.single => '싱글',
-    GameMode.teamRegular => '팀 정규',
-    GameMode.teamMini => '팀 미니매치',
+    GameMode.single => '쇼다운',
+    GameMode.teamRegular => '리그전(풀)',
+    GameMode.teamMini => '리그전(컴팩트)',
     GameMode.custom => '커스텀',
   };
+
+  bool get isLeague =>
+      this == GameMode.teamMini || this == GameMode.teamRegular;
 }
