@@ -36,7 +36,7 @@ const _kakaoRedirectUri = 'kakao2def6584659ee97c1e077fc441a58480://oauth';
 const _googleServerClientId =
     '666225781663-ntm56okujop1k74lkg9rrdsl6b1s0hci.apps.googleusercontent.com';
 const _googleRedirectUri =
-    'https://zula-unelidible-thea.ngrok-free.dev/api/v1/auth/login/google';
+    'https://bluffball.p-e.kr/api/v1/auth/login/google';
 
 // ─────────────────────────────────────────────────────────────────────────────
 
