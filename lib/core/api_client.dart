@@ -10,10 +10,10 @@ import 'auth_interceptor.dart';
 ///   - 실 기기(개발)      → 'http://{PC_로컬_IP}:8080'
 ///   - 운영 서버          → 'https://api.bluffball.com'  (TODO: 실제 도메인으로 교체)
 class ApiClient {
-  static const String baseUrl = 'https://zula-unelidible-thea.ngrok-free.dev';
+  static const String baseUrl = 'http://161.33.152.213:8080';
 
   /// STOMP WebSocket 엔드포인트 (SockJS 네이티브 WebSocket 경로)
-  static const String wsUrl = 'wss://zula-unelidible-thea.ngrok-free.dev/ws/websocket';
+  static const String wsUrl = 'wss://bluffball.p-e.kr/ws/websocket';
 
   /// HTTP baseUrl을 WebSocket URL로 변환 (https→wss, http→ws)
   static String get wsBaseUrl => baseUrl
