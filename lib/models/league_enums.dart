@@ -45,6 +45,17 @@ enum LeagueTier {
         LeagueTier.pro2 => '프로 2부',
       };
 
+  /// 높은 티어 → 낮은 티어 (프로 → 독립 → 아마)
+  static const List<LeagueTier> highToLow = [
+    LeagueTier.pro1,
+    LeagueTier.pro2,
+    LeagueTier.independent,
+    LeagueTier.amateur1,
+    LeagueTier.amateur2,
+    LeagueTier.amateur3,
+    LeagueTier.amateur4,
+  ];
+
   static LeagueTier? fromApi(String? value) => switch (value) {
         'AMATEUR_1' => LeagueTier.amateur1,
         'AMATEUR_2' => LeagueTier.amateur2,
