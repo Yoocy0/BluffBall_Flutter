@@ -17,6 +17,7 @@ import '../widgets/no_team_panel.dart';
 import '../widgets/pitch_loadout_panel.dart';
 import '../widgets/team_home_panel.dart';
 import '../models/team.dart';
+import '../models/team_pitch_cards.dart';
 import 'login_screen.dart';
 import 'match_found_screen.dart';
 import 'matchmaking_screen.dart';
@@ -768,6 +769,83 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// 로스터·구종 미완 메시지. 준비됐으면 null.
+  Future<String?> _leagueMatchReadyIssue(LeagueFormat format) async {
+    final team = _myTeam ?? await _teamService.getMyTeam();
+    if (team == null) return '소속 팀이 없습니다.';
+
+    final batterCount = format == LeagueFormat.compact ? 3 : 9;
+    final slotCount = format == LeagueFormat.compact ? 4 : 5;
+
+    TeamLineup? lineup;
+    TeamPitchCards? pitchCards;
+    try {
+      lineup = await _teamService.getLineup(team.teamId, format.apiValue);
+      pitchCards =
+          await _teamService.getPitchCards(team.teamId, format.apiValue);
+    } catch (_) {
+      return '출전 로스터 또는 구종 선택 정보를 확인할 수 없습니다.';
+    }
+
+    if (lineup == null ||
+        lineup.userIds.length < batterCount ||
+        lineup.startingPitcherUserId == null) {
+      return '출전 로스터가 아직 등록되지 않았습니다.\n팀 탭에서 로스터를 완성해주세요.';
+    }
+
+    final rosterIds = <int>{...lineup.userIds, lineup.startingPitcherUserId!};
+    final byUser = {
+      for (final s in pitchCards?.selections ?? const <MemberPitchSelection>[])
+        s.userId: s,
+    };
+
+    final pitcherId = lineup.startingPitcherUserId!;
+    final pitcherSel = byUser[pitcherId];
+    if (pitcherSel == null ||
+        pitcherSel.cardIds.length < slotCount ||
+        pitcherSel.dropCardId <= 0) {
+      return '투수 구종 선택이 완료되지 않았습니다.\n구종 탭에서 투수 구종을 배치해주세요.';
+    }
+
+    for (final uid in rosterIds) {
+      final sel = byUser[uid];
+      if (sel == null ||
+          sel.cardIds.length < slotCount ||
+          sel.dropCardId <= 0) {
+        return '출전 멤버의 구종 선택이 완료되지 않았습니다.\n구종 탭에서 전원 배치를 완료해주세요.';
+      }
+    }
+    return null;
+  }
+
+  Future<void> _showLeagueMatchNotReadyDialog(String message) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF2A3518),
+        title: const Text(
+          '매칭 준비 미완료',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: Text(
+          message,
+          style: const TextStyle(color: Colors.white70, height: 1.4),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: FilledButton.styleFrom(backgroundColor: _kGold),
+            child: const Text(
+              '확인',
+              style: TextStyle(color: Color(0xFF2A1F05)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _joinLeagueMode(LeagueFormat format, GameMode gameMode) async {
     if (_singleModeLoading) return;
     setState(() => _singleModeLoading = true);
@@ -786,33 +864,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         return;
       }
 
+      final readyIssue = await _leagueMatchReadyIssue(format);
+      if (!mounted) return;
+      if (readyIssue != null) {
+        await _showLeagueMatchNotReadyDialog(readyIssue);
+        return;
+      }
+
       await MatchSessionCoordinator.onQueueJoin();
-      final result = await _leagueMatchService.joinQueue(
-        format: format,
-        tier: tier,
-      );
       if (!mounted) return;
 
-      if (result.isMatched) {
-        await MatchSessionCoordinator.onMatchFound(
-          matchSessionId: result.matchSessionId,
-          gameMode: gameMode,
-        );
-        if (!mounted) return;
-        Navigator.of(context).push(PageRouteBuilder(
-          pageBuilder: (_, __, ___) => MatchFoundScreen(
-            matchSessionId: result.matchSessionId,
-            gameMode: gameMode,
-          ),
-          transitionsBuilder: (_, anim, __, child) =>
-              FadeTransition(opacity: anim, child: child),
-          transitionDuration: const Duration(milliseconds: 350),
-        ));
-      } else {
-        Navigator.of(context).push(PageRouteBuilder(
+      // 대기 화면으로 먼저 이동해 WS 구독 후 join (push는 await하지 않음)
+      if (mounted) setState(() => _singleModeLoading = false);
+      final joinError = await Navigator.of(context).push<Object?>(
+        PageRouteBuilder(
           pageBuilder: (_, __, ___) => MatchmakingScreen(
             gameMode: gameMode,
             onCancelQueue: _leagueMatchService.cancelQueue,
+            pendingJoin: () => _leagueMatchService.joinQueue(
+              format: format,
+              tier: tier,
+            ),
           ),
           transitionDuration: const Duration(milliseconds: 650),
           reverseTransitionDuration: const Duration(milliseconds: 500),
@@ -823,10 +895,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
             child: child,
           ),
-        ));
+        ),
+      );
+
+      if (!mounted) return;
+      if (joinError is MatchException) {
+        if (joinError.code == 'LEAGUE_MATCH_NOT_READY' ||
+            joinError.message.contains('로스터') ||
+            joinError.message.contains('구종')) {
+          await _showLeagueMatchNotReadyDialog(joinError.message);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(joinError.message),
+              backgroundColor: const Color(0xFF3A1A05),
+            ),
+          );
+        }
       }
     } on MatchException catch (e) {
-      if (mounted) {
+      if (!mounted) return;
+      if (e.code == 'LEAGUE_MATCH_NOT_READY' ||
+          e.message.contains('로스터') ||
+          e.message.contains('구종')) {
+        await _showLeagueMatchNotReadyDialog(e.message);
+      } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(e.message),
