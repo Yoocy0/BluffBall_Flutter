@@ -12,6 +12,7 @@ import '../models/game_session_state_exception.dart';
 import '../models/league_enums.dart';
 import '../widgets/board_game_box.dart';
 import '../widgets/exit_confirm_dialogs.dart';
+import '../widgets/league_home_panel.dart';
 import '../widgets/no_team_panel.dart';
 import '../widgets/team_home_panel.dart';
 import '../models/team.dart';
@@ -63,6 +64,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _hasTeam = false;
   bool _teamStatusLoaded = false;
   Team? _myTeam;
+  int? _myUserId;
   NoTeamPanelMode _noTeamMode = NoTeamPanelMode.idle;
   SavedMatchSession? _pendingMatchSession;
 
@@ -242,9 +244,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _refreshTeamStatus() async {
     try {
+      final token = await TokenStorage().getAccessToken();
+      final userIdStr =
+          token != null ? MatchService.extractUserIdFromJwt(token) : null;
+      final userId = userIdStr != null ? int.tryParse(userIdStr) : null;
       final team = await _teamService.getMyTeam();
       if (!mounted) return;
       setState(() {
+        _myUserId = userId;
         _myTeam = team;
         _hasTeam = team != null;
         _teamStatusLoaded = true;
@@ -283,7 +290,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     _buildTopBar(),
                     Expanded(child: _buildMainContent()),
                     _buildBottomButtons(),
-                    if (_navIndex == 2 || _navIndex == 3) const SizedBox(height: 8),
+                    if (_navIndex == 2 || _navIndex == 3 || _navIndex == 4)
+                      const SizedBox(height: 8),
                     _buildBottomNav(),
                   ],
                 ),
@@ -352,6 +360,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               mode: _noTeamMode,
               onTeamReady: _refreshTeamStatus,
             );
+      case 4:
+        return LeagueHomePanel(
+          key: ValueKey('league-${_myTeam?.teamId ?? 0}'),
+          hasTeam: _hasTeam,
+          teamName: _myTeam?.name,
+          teamId: _myTeam?.teamId,
+          isLeader: _myUserId != null &&
+              _myTeam != null &&
+              _myUserId == _myTeam!.leaderUserId,
+        );
       default: return const BoardGameBox(heroTagOverride: BoardGameBox.heroTag);
     }
   }
@@ -490,6 +508,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _NavItem(icon: Icons.style_rounded, label: '구종'),
       _NavItem(icon: Icons.sports_soccer_rounded, label: '경기'),
       _NavItem(icon: Icons.groups_rounded, label: '팀'),
+      _NavItem(icon: Icons.emoji_events_rounded, label: '리그'),
     ];
 
     return Container(
