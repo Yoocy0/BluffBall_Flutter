@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import '../core/api_client.dart';
 import '../models/api_error.dart';
 import '../models/team.dart';
+import '../models/team_pitch_cards.dart';
 import 'token_storage.dart';
 
 /// 팀(클랜) API
@@ -277,6 +278,40 @@ class TeamService {
       return TeamLineup.fromJson(response.data as Map<String, dynamic>);
     }
     throw _error(response, '로스터 저장에 실패했습니다.');
+  }
+
+  /// 구종·강화 사전 선택 조회. 없으면 null.
+  Future<TeamPitchCards?> getPitchCards(int teamId, String format) async {
+    final options = await _authOptions();
+    final response = await _dio.get(
+      '/api/v1/teams/$teamId/lineups/$format/pitch-cards',
+      options: options,
+    );
+    if (response.statusCode == 404) return null;
+    if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
+      return TeamPitchCards.fromJson(response.data as Map<String, dynamic>);
+    }
+    throw _error(response, '구종 카드 조회에 실패했습니다.');
+  }
+
+  /// 구종·강화 사전 선택 저장 (리더, 전체 교체)
+  Future<TeamPitchCards> upsertPitchCards({
+    required int teamId,
+    required String format,
+    required List<MemberPitchSelection> selections,
+  }) async {
+    final options = await _authOptions();
+    final response = await _dio.put(
+      '/api/v1/teams/$teamId/lineups/$format/pitch-cards',
+      data: {
+        'selections': selections.map((s) => s.toJson()).toList(),
+      },
+      options: options,
+    );
+    if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
+      return TeamPitchCards.fromJson(response.data as Map<String, dynamic>);
+    }
+    throw _error(response, '구종 카드 저장에 실패했습니다.');
   }
 
   /// 온/오프라인 heartbeat

@@ -14,6 +14,7 @@ import '../widgets/board_game_box.dart';
 import '../widgets/exit_confirm_dialogs.dart';
 import '../widgets/league_home_panel.dart';
 import '../widgets/no_team_panel.dart';
+import '../widgets/pitch_loadout_panel.dart';
 import '../widgets/team_home_panel.dart';
 import '../models/team.dart';
 import 'login_screen.dart';
@@ -346,7 +347,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget _buildContentForIndex() {
     switch (_navIndex) {
       case 0: return const _ShopScreen();
-      case 1: return _PitchCardSettingsScreen(hasTeam: _hasTeam);
+      case 1:
+        return PitchLoadoutPanel(
+          key: ValueKey('pitch-${_myTeam?.teamId ?? 0}'),
+          team: _hasTeam ? _myTeam : null,
+          isLeader: _myUserId != null &&
+              _myTeam != null &&
+              _myUserId == _myTeam!.leaderUserId,
+        );
       case 3: return _hasTeam && _myTeam != null
           ? TeamHomePanel(
               key: ValueKey(_myTeam!.teamId),
@@ -932,87 +940,6 @@ class _ShopScreen extends StatelessWidget {
             fontSize: 18, fontWeight: FontWeight.w700, letterSpacing: 4,
           )),
         ],
-      ),
-    );
-  }
-}
-
-// ─── 구종 카드 설정 ───────────────────────────────────────────────────────────
-
-class _PitchCardSettingsScreen extends StatelessWidget {
-  final bool hasTeam;
-
-  const _PitchCardSettingsScreen({required this.hasTeam});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: _kPanelBorder, width: 2),
-          color: _kPanelBg.withValues(alpha: 0.92),
-        ),
-        child: Column(
-          children: [
-            Container(
-              height: 3,
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [_kBrownBase, _kGold, _kBrownBase],
-                ),
-              ),
-            ),
-            Expanded(
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 28),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.style_rounded,
-                        size: 56,
-                        color: _kGold.withValues(alpha: 0.7),
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        '구종 카드',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        hasTeam
-                            ? '리그 출전용 구종·강화 카드 설정은 곧 연동됩니다.'
-                            : '팀에 소속된 뒤 구종 카드를 설정할 수 있습니다.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.45),
-                          fontSize: 13,
-                          height: 1.4,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            Container(
-              height: 3,
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [_kBrownBase, _kGold, _kBrownBase],
-                ),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
