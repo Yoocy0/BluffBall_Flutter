@@ -10,7 +10,4 @@ enum GameMode {
     GameMode.teamMini => '리그전(컴팩트)',
     GameMode.custom => '커스텀',
   };
-
-  bool get isLeague =>
-      this == GameMode.teamMini || this == GameMode.teamRegular;
 }

@@ -4,20 +4,9 @@ import '../services/auth_service.dart';
 import '../services/match_service.dart';
 import '../services/match_session_storage.dart';
 import '../services/game_session_restore_service.dart';
-import '../services/team_service.dart';
-import '../services/league_service.dart';
-import '../services/league_match_service.dart';
-import '../services/token_storage.dart';
 import '../models/game_session_state_exception.dart';
-import '../models/league_enums.dart';
 import '../widgets/board_game_box.dart';
 import '../widgets/exit_confirm_dialogs.dart';
-import '../widgets/league_home_panel.dart';
-import '../widgets/no_team_panel.dart';
-import '../widgets/pitch_loadout_panel.dart';
-import '../widgets/team_home_panel.dart';
-import '../models/team.dart';
-import '../models/team_pitch_cards.dart';
 import 'login_screen.dart';
 import 'match_found_screen.dart';
 import 'matchmaking_screen.dart';
@@ -34,13 +23,7 @@ const _kPanelBorder = Color(0xFF5A6E30);
 
 // ─── 데이터 모델 ─────────────────────────────────────────────────────────────
 
-enum _GameStartMode { showdown, leagueCompact, leagueFull }
-
-class _LeagueGate {
-  final bool allowed;
-  final String? hint;
-  const _LeagueGate({required this.allowed, this.hint});
-}
+enum _ShowdownOpponent { vsUser, vsBot }
 
 class _NavItem {
   final IconData icon;
@@ -58,23 +41,15 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
-  int _navIndex = 2;     // 기본: 경기
-  int _prevNavIndex = 2;
+  int _navIndex = 1;     // 기본: 경기 (가운데)
+  int _prevNavIndex = 1;
   bool _singleModeLoading = false;
   bool _restoreInProgress = false;
   bool _reconnectDialogVisible = false;
-  bool _hasTeam = false;
-  bool _teamStatusLoaded = false;
-  Team? _myTeam;
-  int? _myUserId;
-  NoTeamPanelMode _noTeamMode = NoTeamPanelMode.idle;
   SavedMatchSession? _pendingMatchSession;
 
   final _matchService = MatchService();
   final _restoreService = GameSessionRestoreService();
-  final _teamService = TeamService();
-  final _leagueService = LeagueService();
-  final _leagueMatchService = LeagueMatchService();
 
   @override
   void initState() {
@@ -82,7 +57,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkPendingMatch();
-      _refreshTeamStatus();
     });
   }
 
@@ -239,34 +213,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     setState(() {
       _prevNavIndex = _navIndex;
       _navIndex = index;
-      if (index != 3) _noTeamMode = NoTeamPanelMode.idle;
     });
-    if (index == 3) _refreshTeamStatus();
-  }
-
-  Future<void> _refreshTeamStatus() async {
-    try {
-      final token = await TokenStorage().getAccessToken();
-      final userIdStr =
-          token != null ? MatchService.extractUserIdFromJwt(token) : null;
-      final userId = userIdStr != null ? int.tryParse(userIdStr) : null;
-      final team = await _teamService.getMyTeam();
-      if (!mounted) return;
-      setState(() {
-        _myUserId = userId;
-        _myTeam = team;
-        _hasTeam = team != null;
-        _teamStatusLoaded = true;
-        if (team != null) _noTeamMode = NoTeamPanelMode.idle;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _myTeam = null;
-        _hasTeam = false;
-        _teamStatusLoaded = true;
-      });
-    }
   }
 
   @override
@@ -292,8 +239,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     _buildTopBar(),
                     Expanded(child: _buildMainContent()),
                     _buildBottomButtons(),
-                    if (_navIndex == 2 || _navIndex == 3 || _navIndex == 4)
-                      const SizedBox(height: 8),
+                    if (_navIndex == 1) const SizedBox(height: 8),
                     _buildBottomNav(),
                   ],
                 ),
@@ -347,49 +293,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Widget _buildContentForIndex() {
     switch (_navIndex) {
-      case 0: return const _ShopScreen();
-      case 1:
-        return PitchLoadoutPanel(
-          key: ValueKey('pitch-${_myTeam?.teamId ?? 0}'),
-          team: _hasTeam ? _myTeam : null,
-          isLeader: _myUserId != null &&
-              _myTeam != null &&
-              _myUserId == _myTeam!.leaderUserId,
-        );
-      case 3: return _hasTeam && _myTeam != null
-          ? TeamHomePanel(
-              key: ValueKey(_myTeam!.teamId),
-              team: _myTeam!,
-              onLeftTeam: _refreshTeamStatus,
-              onTeamUpdated: (team) {
-                setState(() => _myTeam = team);
-              },
-            )
-          : NoTeamPanel(
-              mode: _noTeamMode,
-              onTeamReady: _refreshTeamStatus,
-            );
-      case 4:
-        return LeagueHomePanel(
-          key: ValueKey('league-${_myTeam?.teamId ?? 0}'),
-          hasTeam: _hasTeam,
-          teamName: _myTeam?.name,
-          teamId: _myTeam?.teamId,
-          isLeader: _myUserId != null &&
-              _myTeam != null &&
-              _myUserId == _myTeam!.leaderUserId,
-        );
-      default: return const BoardGameBox(heroTagOverride: BoardGameBox.heroTag);
+      case 0:
+        return const _ShopScreen();
+      case 2:
+        return const _CardsScreen();
+      default:
+        return const BoardGameBox(heroTagOverride: BoardGameBox.heroTag);
     }
   }
 
   // ── 하단 버튼 (탭별) ─────────────────────────────────────────────────────
   Widget _buildBottomButtons() {
-    switch (_navIndex) {
-      case 2: return _buildMatchButtons();
-      case 3: return _buildTeamButtons();
-      default: return const SizedBox.shrink();
-    }
+    if (_navIndex == 1) return _buildMatchButtons();
+    return const SizedBox.shrink();
   }
 
   Widget _buildMatchButtons() {
@@ -418,11 +334,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
           Row(children: [
             Expanded(child: _BattleButton(
-              label: _singleModeLoading ? '연결 중...' : '게임 시작',
+              label: _singleModeLoading ? '연결 중...' : '쇼다운',
               icon: _singleModeLoading
                   ? Icons.hourglass_top_rounded
-                  : Icons.sports_esports_rounded,
-              onTap: _singleModeLoading ? () {} : _showGameStartModes,
+                  : Icons.bolt_rounded,
+              onTap: _singleModeLoading ? () {} : _showShowdownModes,
               gradient: const LinearGradient(
                 begin: Alignment.topCenter, end: Alignment.bottomCenter,
                 colors: [Color(0xFFF5C542), Color(0xFFD4821A)],
@@ -442,42 +358,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ],
       ),
     );
-  }
-
-  Widget _buildTeamButtons() {
-    if (!_teamStatusLoaded) return const SizedBox(height: 58);
-
-    if (!_hasTeam) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-        child: Row(children: [
-          Expanded(child: _BattleButton(
-            label: '검색',
-            icon: Icons.search_rounded,
-            onTap: () => setState(() => _noTeamMode = NoTeamPanelMode.search),
-            gradient: const LinearGradient(
-              begin: Alignment.topCenter, end: Alignment.bottomCenter,
-              colors: [Color(0xFF6BB8E8), Color(0xFF2F6FA8)],
-            ),
-            shadowColor: const Color(0xFF1A3A60),
-          )),
-          const SizedBox(width: 12),
-          Expanded(child: _BattleButton(
-            label: '창단',
-            icon: Icons.add_home_rounded,
-            onTap: () => setState(() => _noTeamMode = NoTeamPanelMode.create),
-            gradient: const LinearGradient(
-              begin: Alignment.topCenter, end: Alignment.bottomCenter,
-              colors: [Color(0xFFF5C542), Color(0xFFD4821A)],
-            ),
-            shadowColor: const Color(0xFF8B5010),
-          )),
-        ]),
-      );
-    }
-
-    // 소속 팀: 하단 정규/미니/유니폼 제거 (패널 안에서 전적·금고·로스터)
-    return const SizedBox.shrink();
   }
 
   // ── 상단 바 ───────────────────────────────────────────────────────────────
@@ -510,14 +390,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // ── 하단 네비게이션 (4개) ────────────────────────────────────────────────
+  // ── 하단 네비게이션 (상점 · 경기 · 카드) ────────────────────────────────
   Widget _buildBottomNav() {
     const items = [
       _NavItem(icon: Icons.storefront_rounded, label: '상점'),
-      _NavItem(icon: Icons.style_rounded, label: '구종'),
       _NavItem(icon: Icons.sports_soccer_rounded, label: '경기'),
-      _NavItem(icon: Icons.groups_rounded, label: '팀'),
-      _NavItem(icon: Icons.emoji_events_rounded, label: '리그'),
+      _NavItem(icon: Icons.style_rounded, label: '카드'),
     ];
 
     return Container(
@@ -599,11 +477,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _showGameStartModes() async {
-    final canStartLeague = await _canStartLeagueMatch();
-    if (!mounted) return;
-
-    final selected = await showDialog<_GameStartMode>(
+  Future<void> _showShowdownModes() async {
+    final selected = await showDialog<_ShowdownOpponent>(
       context: context,
       barrierColor: Colors.black.withValues(alpha: 0.55),
       builder: (ctx) => Dialog(
@@ -636,7 +511,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    'MODE SELECT',
+                    'SHOWDOWN',
                     style: TextStyle(
                       color: _kGold.withValues(alpha: 0.8),
                       fontSize: 12,
@@ -646,7 +521,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    '게임 모드 선택',
+                    '상대 선택',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 18,
@@ -655,9 +530,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ),
                   const SizedBox(height: 20),
                   _BattleButton(
-                    label: '쇼다운',
-                    icon: Icons.bolt_rounded,
-                    onTap: () => Navigator.of(ctx).pop(_GameStartMode.showdown),
+                    label: 'vs User',
+                    icon: Icons.person_rounded,
+                    onTap: () =>
+                        Navigator.of(ctx).pop(_ShowdownOpponent.vsUser),
                     gradient: const LinearGradient(
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
@@ -667,10 +543,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ),
                   const SizedBox(height: 14),
                   _BattleButton(
-                    label: '리그전(컴팩트)',
-                    icon: Icons.sports_baseball_rounded,
-                    enabled: canStartLeague.allowed,
-                    onTap: () => Navigator.of(ctx).pop(_GameStartMode.leagueCompact),
+                    label: 'vs Bot',
+                    icon: Icons.smart_toy_rounded,
+                    onTap: () =>
+                        Navigator.of(ctx).pop(_ShowdownOpponent.vsBot),
                     gradient: const LinearGradient(
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
@@ -678,31 +554,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                     shadowColor: const Color(0xFF1A3A60),
                   ),
-                  const SizedBox(height: 14),
-                  _BattleButton(
-                    label: '리그전(풀)',
-                    icon: Icons.emoji_events_rounded,
-                    enabled: canStartLeague.allowed,
-                    onTap: () => Navigator.of(ctx).pop(_GameStartMode.leagueFull),
-                    gradient: const LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Color(0xFFE07A4A), Color(0xFFA04020)],
-                    ),
-                    shadowColor: const Color(0xFF5A2010),
-                  ),
-                  if (canStartLeague.hint != null) ...[
-                    const SizedBox(height: 14),
-                    Text(
-                      canStartLeague.hint!,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.45),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
                   const SizedBox(height: 8),
                 ],
               ),
@@ -730,214 +581,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (!mounted || selected == null) return;
 
     switch (selected) {
-      case _GameStartMode.showdown:
+      case _ShowdownOpponent.vsUser:
         await _joinSingleMode();
-      case _GameStartMode.leagueCompact:
-        await _joinLeagueMode(LeagueFormat.compact, GameMode.teamMini);
-      case _GameStartMode.leagueFull:
-        await _joinLeagueMode(LeagueFormat.full, GameMode.teamRegular);
-    }
-  }
-
-  Future<_LeagueGate> _canStartLeagueMatch() async {
-    try {
-      final team = await _teamService.getMyTeam();
-      if (team == null) {
-        return const _LeagueGate(
-          allowed: false,
-          hint: '리그전은 팀 소속 시에만 이용할 수 있습니다',
-        );
-      }
-
-      final token = await TokenStorage().getAccessToken();
-      final userIdStr =
-          token != null ? MatchService.extractUserIdFromJwt(token) : null;
-      final userId = userIdStr != null ? int.tryParse(userIdStr) : null;
-      final isLeader = userId != null && userId == team.leaderUserId;
-      if (!isLeader) {
-        return const _LeagueGate(
-          allowed: false,
-          hint: '리그전 매칭은 팀 리더만 시작할 수 있습니다',
-        );
-      }
-      return const _LeagueGate(allowed: true);
-    } catch (_) {
-      return const _LeagueGate(
-        allowed: false,
-        hint: '팀 정보를 확인할 수 없습니다',
-      );
-    }
-  }
-
-  /// 로스터·구종 미완 메시지. 준비됐으면 null.
-  Future<String?> _leagueMatchReadyIssue(LeagueFormat format) async {
-    final team = _myTeam ?? await _teamService.getMyTeam();
-    if (team == null) return '소속 팀이 없습니다.';
-
-    final batterCount = format == LeagueFormat.compact ? 3 : 9;
-    final slotCount = format == LeagueFormat.compact ? 4 : 5;
-
-    TeamLineup? lineup;
-    TeamPitchCards? pitchCards;
-    try {
-      lineup = await _teamService.getLineup(team.teamId, format.apiValue);
-      pitchCards =
-          await _teamService.getPitchCards(team.teamId, format.apiValue);
-    } catch (_) {
-      return '출전 로스터 또는 구종 선택 정보를 확인할 수 없습니다.';
-    }
-
-    if (lineup == null ||
-        lineup.userIds.length < batterCount ||
-        lineup.startingPitcherUserId == null) {
-      return '출전 로스터가 아직 등록되지 않았습니다.\n팀 탭에서 로스터를 완성해주세요.';
-    }
-
-    final rosterIds = <int>{...lineup.userIds, lineup.startingPitcherUserId!};
-    final byUser = {
-      for (final s in pitchCards?.selections ?? const <MemberPitchSelection>[])
-        s.userId: s,
-    };
-
-    final pitcherId = lineup.startingPitcherUserId!;
-    final pitcherSel = byUser[pitcherId];
-    if (pitcherSel == null ||
-        pitcherSel.cardIds.length < slotCount ||
-        pitcherSel.dropCardId <= 0) {
-      return '투수 구종 선택이 완료되지 않았습니다.\n구종 탭에서 투수 구종을 배치해주세요.';
-    }
-
-    for (final uid in rosterIds) {
-      final sel = byUser[uid];
-      if (sel == null ||
-          sel.cardIds.length < slotCount ||
-          sel.dropCardId <= 0) {
-        return '출전 멤버의 구종 선택이 완료되지 않았습니다.\n구종 탭에서 전원 배치를 완료해주세요.';
-      }
-    }
-    return null;
-  }
-
-  Future<void> _showLeagueMatchNotReadyDialog(String message) async {
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF2A3518),
-        title: const Text(
-          '매칭 준비 미완료',
-          style: TextStyle(color: Colors.white),
-        ),
-        content: Text(
-          message,
-          style: const TextStyle(color: Colors.white70, height: 1.4),
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx),
-            style: FilledButton.styleFrom(backgroundColor: _kGold),
-            child: const Text(
-              '확인',
-              style: TextStyle(color: Color(0xFF2A1F05)),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _joinLeagueMode(LeagueFormat format, GameMode gameMode) async {
-    if (_singleModeLoading) return;
-    setState(() => _singleModeLoading = true);
-    try {
-      final tier = await _leagueService.getCurrentTier(format);
-      if (!mounted) return;
-      if (tier == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '${format == LeagueFormat.compact ? '컴팩트' : '풀'} 리그에 먼저 참가해야 합니다.',
-            ),
-            backgroundColor: const Color(0xFF3A1A05),
-          ),
-        );
-        return;
-      }
-
-      final readyIssue = await _leagueMatchReadyIssue(format);
-      if (!mounted) return;
-      if (readyIssue != null) {
-        await _showLeagueMatchNotReadyDialog(readyIssue);
-        return;
-      }
-
-      await MatchSessionCoordinator.onQueueJoin();
-      if (!mounted) return;
-
-      // 대기 화면으로 먼저 이동해 WS 구독 후 join (push는 await하지 않음)
-      if (mounted) setState(() => _singleModeLoading = false);
-      final joinError = await Navigator.of(context).push<Object?>(
-        PageRouteBuilder(
-          pageBuilder: (_, __, ___) => MatchmakingScreen(
-            gameMode: gameMode,
-            onCancelQueue: _leagueMatchService.cancelQueue,
-            pendingJoin: () => _leagueMatchService.joinQueue(
-              format: format,
-              tier: tier,
-            ),
-          ),
-          transitionDuration: const Duration(milliseconds: 650),
-          reverseTransitionDuration: const Duration(milliseconds: 500),
-          transitionsBuilder: (_, animation, __, child) => FadeTransition(
-            opacity: CurvedAnimation(
-              parent: animation,
-              curve: const Interval(0.35, 1.0, curve: Curves.easeOut),
-            ),
-            child: child,
-          ),
-        ),
-      );
-
-      if (!mounted) return;
-      if (joinError is MatchException) {
-        if (joinError.code == 'LEAGUE_MATCH_NOT_READY' ||
-            joinError.message.contains('로스터') ||
-            joinError.message.contains('구종')) {
-          await _showLeagueMatchNotReadyDialog(joinError.message);
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(joinError.message),
-              backgroundColor: const Color(0xFF3A1A05),
-            ),
-          );
-        }
-      }
-    } on MatchException catch (e) {
-      if (!mounted) return;
-      if (e.code == 'LEAGUE_MATCH_NOT_READY' ||
-          e.message.contains('로스터') ||
-          e.message.contains('구종')) {
-        await _showLeagueMatchNotReadyDialog(e.message);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.message),
-            backgroundColor: const Color(0xFF3A1A05),
-          ),
-        );
-      }
-    } catch (_) {
-      if (mounted) {
+      case _ShowdownOpponent.vsBot:
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('네트워크 오류가 발생했습니다.'),
+            content: Text('vs Bot은 곧 지원될 예정입니다.'),
             backgroundColor: Color(0xFF3A1A05),
           ),
         );
-      }
-    } finally {
-      if (mounted) setState(() => _singleModeLoading = false);
     }
   }
 
@@ -1029,6 +681,30 @@ class _ShopScreen extends StatelessWidget {
               color: _kGold.withValues(alpha: 0.25)),
           const SizedBox(height: 16),
           Text('상점', style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.2),
+            fontSize: 18, fontWeight: FontWeight.w700, letterSpacing: 4,
+          )),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── 카드 화면 (빈 화면) ─────────────────────────────────────────────────────
+
+class _CardsScreen extends StatelessWidget {
+  const _CardsScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.style_rounded, size: 64,
+              color: _kGold.withValues(alpha: 0.25)),
+          const SizedBox(height: 16),
+          Text('카드', style: TextStyle(
             color: Colors.white.withValues(alpha: 0.2),
             fontSize: 18, fontWeight: FontWeight.w700, letterSpacing: 4,
           )),
@@ -1138,11 +814,9 @@ class _BattleButton extends StatefulWidget {
   final VoidCallback onTap;
   final LinearGradient gradient;
   final Color shadowColor;
-  final bool enabled;
   const _BattleButton({
     required this.label, required this.icon, required this.onTap,
     required this.gradient, required this.shadowColor,
-    this.enabled = true,
   });
 
   @override
@@ -1154,61 +828,48 @@ class _BattleButtonState extends State<_BattleButton> {
 
   @override
   Widget build(BuildContext context) {
-    final enabled = widget.enabled;
-
-    return Opacity(
-      opacity: enabled ? 1 : 0.38,
-      child: GestureDetector(
-        onTapDown: enabled ? (_) => setState(() => _pressed = true) : null,
-        onTapUp: enabled
-            ? (_) {
-                setState(() => _pressed = false);
-                widget.onTap();
-              }
-            : null,
-        onTapCancel: enabled ? () => setState(() => _pressed = false) : null,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 80),
-          height: 58,
-          transform: Matrix4.translationValues(0, _pressed ? 3 : 0, 0),
-          decoration: BoxDecoration(
-            gradient: enabled
-                ? widget.gradient
-                : const LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Color(0xFF5A5A5A), Color(0xFF3A3A3A)],
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) {
+        setState(() => _pressed = false);
+        widget.onTap();
+      },
+      onTapCancel: () => setState(() => _pressed = false),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 80),
+        height: 58,
+        transform: Matrix4.translationValues(0, _pressed ? 3 : 0, 0),
+        decoration: BoxDecoration(
+          gradient: widget.gradient,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: _pressed
+              ? []
+              : [
+                  BoxShadow(
+                    color: widget.shadowColor.withValues(alpha: 0.9),
+                    offset: const Offset(0, 4),
+                    blurRadius: 0,
                   ),
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: (!enabled || _pressed)
-                ? []
-                : [
-                    BoxShadow(
-                      color: widget.shadowColor.withValues(alpha: 0.9),
-                      offset: const Offset(0, 4),
-                      blurRadius: 0,
-                    ),
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.35),
-                      offset: const Offset(0, 6),
-                      blurRadius: 10,
-                    ),
-                  ],
-            border: Border.all(
-              color: Colors.white.withValues(alpha: enabled ? 0.15 : 0.08),
-              width: 1,
-            ),
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.35),
+                    offset: const Offset(0, 6),
+                    blurRadius: 10,
+                  ),
+                ],
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.15),
+            width: 1,
           ),
-          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Icon(widget.icon, color: Colors.white, size: 22),
-            const SizedBox(width: 8),
-            Text(widget.label, style: const TextStyle(
-              color: Colors.white, fontSize: 15, fontWeight: FontWeight.w900,
-              letterSpacing: 0.5,
-              shadows: [Shadow(color: Colors.black38, offset: Offset(0, 1), blurRadius: 3)],
-            )),
-          ]),
         ),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Icon(widget.icon, color: Colors.white, size: 22),
+          const SizedBox(width: 8),
+          Text(widget.label, style: const TextStyle(
+            color: Colors.white, fontSize: 15, fontWeight: FontWeight.w900,
+            letterSpacing: 0.5,
+            shadows: [Shadow(color: Colors.black38, offset: Offset(0, 1), blurRadius: 3)],
+          )),
+        ]),
       ),
     );
   }
