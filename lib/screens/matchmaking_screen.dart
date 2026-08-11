@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:stomp_dart_client/stomp_dart_client.dart';
 
 import '../core/api_client.dart';
-import '../models/match_join_response.dart';
 import '../services/match_service.dart';
 import '../services/match_session_storage.dart';
 import '../services/token_storage.dart';
@@ -18,16 +17,10 @@ class MatchmakingScreen extends StatefulWidget {
   final GameMode gameMode;
   /// 실제 매칭 API 연결 시 서버에서 수신한 세션 ID로 교체
   final String matchSessionId;
-  /// 큐 취소 API. null이면 쇼다운 큐 취소를 사용한다.
-  final Future<void> Function()? onCancelQueue;
-  /// WS 구독 직후 호출. 리그 매칭처럼 join을 대기 화면 진입 후에 할 때 사용.
-  final Future<MatchJoinResponse> Function()? pendingJoin;
   const MatchmakingScreen({
     super.key,
     this.gameMode = GameMode.single,
     this.matchSessionId = '',
-    this.onCancelQueue,
-    this.pendingJoin,
   });
 
   @override
@@ -42,7 +35,6 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
   final _matchService = MatchService();
   StompClient? _stompClient;
   bool _isCancelling = false;
-  bool _pendingJoinStarted = false;
   bool _matched = false;
 
   late final AnimationController _dotsCtrl;
@@ -116,8 +108,6 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
           onWebSocketError: (dynamic error) {
             // ignore: avoid_print
             print('[WS] 오류: $error');
-            // 연결 실패해도 큐 join은 진행 (즉시 MATCHED일 수 있음)
-            _runPendingJoin();
           },
           onWebSocketDone: () =>
               // ignore: avoid_print
@@ -125,12 +115,6 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
         ),
       );
       _stompClient?.activate();
-      // WS가 느리거나 실패해도 join이 막히지 않도록 폴백
-      Future.delayed(const Duration(seconds: 2), () {
-        if (mounted) _runPendingJoin();
-      });
-    } else if (mounted) {
-      _runPendingJoin();
     }
   }
 
@@ -151,30 +135,7 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
           _onMatchFound(matchSessionId);
         },
       );
-      _runPendingJoin();
     };
-  }
-
-  Future<void> _runPendingJoin() async {
-    final join = widget.pendingJoin;
-    if (join == null || _pendingJoinStarted) return;
-    _pendingJoinStarted = true;
-    try {
-      final result = await join();
-      if (!mounted || _matched) return;
-      if (result.isMatched) {
-        _onMatchFound(result.matchSessionId);
-      }
-      // WAITING이면 이 화면에 머물며 WS 성사를 기다린다.
-    } on MatchException catch (e) {
-      if (!mounted) return;
-      Navigator.of(context).pop(e);
-    } catch (_) {
-      if (!mounted) return;
-      Navigator.of(context).pop(
-        const MatchException('리그 매칭에 실패했습니다.'),
-      );
-    }
   }
 
   void _onMatchFound(String? matchSessionId) {
@@ -200,8 +161,7 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
     if (_isCancelling) return;
     setState(() => _isCancelling = true);
     _stompClient?.deactivate();
-    final cancel = widget.onCancelQueue ?? _matchService.cancelQueue;
-    await cancel();
+    await _matchService.cancelQueue();
     if (mounted) Navigator.of(context).pop();
   }
 
@@ -210,8 +170,7 @@ class _MatchmakingScreenState extends State<MatchmakingScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
-      final cancel = widget.onCancelQueue ?? _matchService.cancelQueue;
-      cancel();
+      _matchService.cancelQueue();
       _stompClient?.deactivate();
     }
   }
