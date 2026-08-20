@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
+import '../services/post_auth_navigation.dart';
 import '../services/token_storage.dart';
 import '../widgets/game_background.dart';
 import '../widgets/bluffball_logo.dart';
-import 'home_screen.dart';
 import 'login_screen.dart';
 
 class LandingScreen extends StatefulWidget {
@@ -55,15 +55,20 @@ class _LandingScreenState extends State<LandingScreen>
     final hasValidSession = await sessionFuture;
     if (!mounted) return;
 
-    Navigator.of(context).pushReplacement(
-      PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) =>
-            hasValidSession ? const HomeScreen() : const LoginScreen(),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) =>
-            FadeTransition(opacity: animation, child: child),
-        transitionDuration: const Duration(milliseconds: 500),
-      ),
-    );
+    if (hasValidSession) {
+      // 앱 킬/재실행: 세션만 복원 → 홈. 튜토리얼은 로그인 시에만.
+      await navigateAfterSessionRestore(context);
+    } else {
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) =>
+              const LoginScreen(),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+              FadeTransition(opacity: animation, child: child),
+          transitionDuration: const Duration(milliseconds: 500),
+        ),
+      );
+    }
   }
 
   /// 로컬 토큰이 있으면 서버에 세션 유효성을 확인한다.
