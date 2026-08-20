@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/card_info.dart';
+import '../models/tutorial_models.dart';
 import '../screens/home_screen.dart';
 import '../services/tutorial_service.dart';
 import '../widgets/dice_widget.dart';
@@ -49,8 +50,12 @@ class _TutorialFlowScreenState extends State<TutorialFlowScreen> {
   bool _showDice = false;
   bool _diceDone = false;
 
-  // Reward
-  final Set<TutorialRewardPitch> _rewards = {};
+  // Reward (API)
+  TutorialStatus? _tutorialStatus;
+  bool _statusLoading = false;
+  String? _statusError;
+  final Set<int> _selectedCardIds = {};
+  List<GrantedPitchCard> _granted = const [];
   bool _completing = false;
 
   bool get _canExit => widget.isReplay || _stage == TutorialStage.finished;
@@ -134,9 +139,11 @@ class _TutorialFlowScreenState extends State<TutorialFlowScreen> {
                 spotlight: TutorialSpotlight.batterGrid,
               ),
             ],
-        TutorialStage.reward => const [
+        TutorialStage.reward => [
               CoachBeat(
-                text: '커브 / 슬라이더 / 포크 중 2장을 고르세요. 포심은 기본 지급됩니다.',
+                text: widget.isReplay
+                    ? '재플레이에서는 카드가 지급되지 않습니다.'
+                    : '서버에서 받은 선택지 중 ${_tutorialStatus?.selectableCount ?? 2}장을 고르세요. 포심은 자동 지급됩니다.',
               ),
             ],
         TutorialStage.finished => const [
@@ -373,34 +380,91 @@ class _TutorialFlowScreenState extends State<TutorialFlowScreen> {
     Future.delayed(const Duration(milliseconds: 900), () {
       if (!mounted) return;
       _goStage(TutorialStage.reward);
+      _loadTutorialStatus();
     });
   }
 
+  Future<void> _loadTutorialStatus() async {
+    setState(() {
+      _statusLoading = true;
+      _statusError = null;
+    });
+
+    try {
+      final status = await _service.fetchStatus();
+      if (!mounted) return;
+      setState(() {
+        _tutorialStatus = status;
+        _statusLoading = false;
+        _selectedCardIds.clear();
+        if (status.completed && !widget.isReplay) {
+          _statusError = '이미 튜토리얼을 완료했습니다.';
+        }
+      });
+    } on TutorialException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _statusLoading = false;
+        _statusError = e.message;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _statusLoading = false;
+        _statusError = '구종 선택지를 불러오지 못했습니다.';
+      });
+    }
+  }
+
   Future<void> _completeRewards() async {
-    if (_completing || _rewards.length != 2) return;
+    if (_completing) return;
+
+    if (widget.isReplay) {
+      setState(() {
+        _stage = TutorialStage.finished;
+        _beat = 0;
+        _granted = const [];
+      });
+      return;
+    }
+
+    final need = _tutorialStatus?.selectableCount ?? 2;
+    if (_selectedCardIds.length != need) return;
+
     setState(() => _completing = true);
     try {
-      if (!widget.isReplay) {
-        await _service.complete(
-          selectedPitchKeys: _rewards.map((e) => e.key).toList(),
-        );
-      }
+      final result = await _service.complete(
+        selectedPitchCardIds: _selectedCardIds.toList(),
+        expectedCount: need,
+      );
       if (!mounted) return;
       setState(() {
         _completing = false;
+        _granted = result.grantedPitchCards;
         _stage = TutorialStage.finished;
         _beat = 0;
       });
-    } catch (e) {
+    } on TutorialException catch (e) {
       if (!mounted) return;
       setState(() => _completing = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('$e'),
-          backgroundColor: const Color(0xFF3A1A05),
-        ),
-      );
+      if (e.isAlreadyCompleted) {
+        await _showPopup('이미 튜토리얼을 완료했습니다.');
+        if (mounted) _goHome();
+        return;
+      }
+      await _showPopup(e.message);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _completing = false);
+      await _showPopup('튜토리얼 완료 처리에 실패했습니다.');
     }
+  }
+
+  Color _accentForPitchName(String name) {
+    if (name.contains('커브')) return const Color(0xFF7B68EE);
+    if (name.contains('슬라이더')) return const Color(0xFF42A5F5);
+    if (name.contains('포크')) return const Color(0xFFFF7043);
+    return const Color(0xFFFFD700);
   }
 
   @override
@@ -576,86 +640,188 @@ class _TutorialFlowScreenState extends State<TutorialFlowScreen> {
   }
 
   Widget _rewardBody() {
+    final fixed = _tutorialStatus?.fixedStarterPitch;
+    final options = _tutorialStatus?.selectableStarterPitches ?? const [];
+    final need = _tutorialStatus?.selectableCount ?? 2;
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
       children: [
-        const TutorialStageHeader(
+        TutorialStageHeader(
           title: '시작 구종 지급',
-          subtitle: '포심 + 변화구 2장',
+          subtitle: widget.isReplay
+              ? '재플레이 · 지급 없음'
+              : '${fixed?.name ?? '포심'} + 변화구 $need장',
         ),
-        ...TutorialRewardPitch.values.map((p) {
-          final sel = _rewards.contains(p);
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: GestureDetector(
-              onTap: () => setState(() {
-                if (sel) {
-                  _rewards.remove(p);
-                } else if (_rewards.length < 2) {
-                  _rewards.add(p);
-                }
-              }),
-              child: Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(14),
-                  color: p.accent.withValues(alpha: sel ? 0.3 : 0.1),
-                  border: Border.all(
-                    color: sel ? const Color(0xFFFFD700) : p.accent,
-                    width: sel ? 2 : 1,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      sel ? Icons.check_circle : Icons.circle_outlined,
-                      color: sel ? const Color(0xFFFFD700) : Colors.white38,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        '${p.name}  ·  ${p.direction} 변화 ${p.changeAmount}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+        if (_statusLoading)
+          const Padding(
+            padding: EdgeInsets.only(top: 40),
+            child: Center(
+              child: CircularProgressIndicator(color: Color(0xFFFFD700)),
+            ),
+          )
+        else if (_statusError != null) ...[
+          Padding(
+            padding: const EdgeInsets.only(top: 24),
+            child: Text(
+              _statusError!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Color(0xFFFF8A65),
+                fontWeight: FontWeight.w700,
               ),
             ),
-          );
-        }),
-        const SizedBox(height: 8),
-        GestureDetector(
-          onTap: _rewards.length == 2 && !_completing ? _completeRewards : null,
-          child: Opacity(
-            opacity: _rewards.length == 2 ? 1 : 0.4,
+          ),
+          const SizedBox(height: 16),
+          GestureDetector(
+            onTap: _loadTutorialStatus,
             child: Container(
-              height: 52,
+              height: 48,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(14),
-                gradient: const LinearGradient(
-                  colors: [Color(0xFFF5C542), Color(0xFFD4821A)],
-                ),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFFFD700)),
               ),
-              child: Text(
-                _completing
-                    ? '처리 중...'
-                    : widget.isReplay
-                        ? '데모 완료'
-                        : '선택 완료 · 튜토리얼 끝내기',
-                style: const TextStyle(
-                  color: Colors.white,
+              child: const Text(
+                '다시 불러오기',
+                style: TextStyle(
+                  color: Color(0xFFFFD700),
                   fontWeight: FontWeight.w900,
-                  fontSize: 16,
                 ),
               ),
             ),
           ),
-        ),
+          if (!widget.isReplay) ...[
+            const SizedBox(height: 10),
+            GestureDetector(
+              onTap: _goHome,
+              child: Container(
+                height: 48,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  color: Colors.white.withValues(alpha: 0.08),
+                ),
+                child: const Text(
+                  '홈으로',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ] else ...[
+          if (fixed != null)
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                color: const Color(0xFFFFD700).withValues(alpha: 0.12),
+                border: Border.all(color: const Color(0xFFFFD700)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.lock_rounded, color: Color(0xFFFFD700)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '기본 지급: ${fixed.name}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ...options.map((p) {
+            final sel = _selectedCardIds.contains(p.cardId);
+            final accent = _accentForPitchName(p.name);
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: GestureDetector(
+                onTap: () {
+                  if (sel) {
+                    setState(() => _selectedCardIds.remove(p.cardId));
+                  } else if (_selectedCardIds.length < need) {
+                    setState(() => _selectedCardIds.add(p.cardId));
+                  } else {
+                    _showPopup('최대 $need개까지 선택할 수 있습니다.');
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    color: accent.withValues(alpha: sel ? 0.3 : 0.1),
+                    border: Border.all(
+                      color: sel ? const Color(0xFFFFD700) : accent,
+                      width: sel ? 2 : 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        sel ? Icons.check_circle : Icons.circle_outlined,
+                        color: sel ? const Color(0xFFFFD700) : Colors.white38,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          p.name,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }),
+          const SizedBox(height: 8),
+          GestureDetector(
+            onTap: widget.isReplay
+                ? (_completing ? null : _completeRewards)
+                : (_selectedCardIds.length == need && !_completing
+                    ? _completeRewards
+                    : null),
+            child: Opacity(
+              opacity: widget.isReplay || _selectedCardIds.length == need
+                  ? 1
+                  : 0.4,
+              child: Container(
+                height: 52,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFF5C542), Color(0xFFD4821A)],
+                  ),
+                ),
+                child: Text(
+                  _completing
+                      ? '처리 중...'
+                      : widget.isReplay
+                          ? '데모 완료'
+                          : '선택 완료 · 튜토리얼 끝내기',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -708,7 +874,15 @@ class _TutorialFlowScreenState extends State<TutorialFlowScreen> {
   }
 
   Widget _finishedOverlay() {
-    final names = _rewards.map((e) => e.name).join(' · ');
+    final names = _granted.isNotEmpty
+        ? _granted.map((e) => e.name).join(' · ')
+        : (_tutorialStatus?.selectableStarterPitches
+                .where((p) => _selectedCardIds.contains(p.cardId))
+                .map((p) => p.name)
+                .join(' · ') ??
+            '');
+    final fixedName = _tutorialStatus?.fixedStarterPitch?.name ?? '포심 패스트볼';
+
     return Positioned.fill(
       child: ColoredBox(
         color: Colors.black.withValues(alpha: 0.75),
@@ -741,7 +915,9 @@ class _TutorialFlowScreenState extends State<TutorialFlowScreen> {
                   Text(
                     widget.isReplay
                         ? '데모만 진행했습니다.'
-                        : '포심 패스트볼 + $names 지급',
+                        : (_granted.isNotEmpty
+                            ? '지급: $names'
+                            : '지급: $fixedName + $names'),
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: Colors.white.withValues(alpha: 0.7),

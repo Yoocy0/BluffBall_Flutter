@@ -1,82 +1,101 @@
 import 'package:dio/dio.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../core/api_client.dart';
+import '../models/api_error.dart';
+import '../models/tutorial_models.dart';
 import 'token_storage.dart';
 
-/// 튜토리얼 완료 여부 + complete API.
-///
-/// 현재는 로컬 boolean을 우선 사용한다.
-/// 이후 로그인/앱 실행 시 백엔드 `tutorialCompleted`로 교체하면 된다.
+/// 튜토리얼 상태 조회 · 완료(구종 지급) API.
 class TutorialService {
-  static const _kLocalCompleted = 'tutorial_completed';
-
-  final _storage = const FlutterSecureStorage();
   final _dio = ApiClient().dio;
   final _tokenStorage = TokenStorage();
 
-  /// 로컬(및 향후 서버) 기준 튜토리얼 완료 여부.
-  Future<bool> isCompleted() async {
-    final local = await _storage.read(key: _kLocalCompleted);
-    return local == 'true';
-  }
-
-  /// 백엔드 연동 전용 훅 — 서버 boolean을 받아 로컬에 반영.
-  Future<void> syncFromServer(bool completed) async {
-    await _storage.write(
-      key: _kLocalCompleted,
-      value: completed ? 'true' : 'false',
+  Future<Options> _authOptions() async {
+    final token = await _tokenStorage.getAccessToken();
+    return Options(
+      headers: token != null ? {'Authorization': 'Bearer $token'} : {},
+      validateStatus: (status) => status != null && status < 500,
     );
   }
 
-  Future<void> markCompletedLocally() async {
-    await _storage.write(key: _kLocalCompleted, value: 'true');
+  /// GET /api/v1/tutorial/status
+  Future<TutorialStatus> fetchStatus() async {
+    final options = await _authOptions();
+    final response = await _dio.get(
+      '/api/v1/tutorial/status',
+      options: options,
+    );
+
+    if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
+      return TutorialStatus.fromJson(response.data as Map<String, dynamic>);
+    }
+
+    throw _error(response, '튜토리얼 상태를 불러오지 못했습니다.');
   }
 
-  /// 첫 완료 시 호출. 선택 구종 2개 + 포심 지급을 서버에 요청한다.
+  /// POST /api/v1/tutorial/complete
   ///
-  /// [selectedPitchKeys]: `CURVE` | `SLIDER` | `FORK`
-  Future<void> complete({required List<String> selectedPitchKeys}) async {
-    if (selectedPitchKeys.length != 2) {
-      throw TutorialException('변화구는 정확히 2개를 선택해야 합니다.');
+  /// [selectedPitchCardIds]: status의 selectableStarterPitches.cardId 중
+  /// [expectedCount]개(기본 2). 포심은 요청에 넣지 않음.
+  Future<TutorialCompleteResult> complete({
+    required List<int> selectedPitchCardIds,
+    int expectedCount = 2,
+  }) async {
+    if (selectedPitchCardIds.length != expectedCount) {
+      throw TutorialException('변화구는 정확히 $expectedCount개를 선택해야 합니다.');
+    }
+    if (selectedPitchCardIds.toSet().length != selectedPitchCardIds.length) {
+      throw const TutorialException('같은 구종을 중복 선택할 수 없습니다.');
     }
 
-    try {
-      final token = await _tokenStorage.getAccessToken();
-      final response = await _dio.post(
-        '/api/v1/tutorial/complete',
-        data: {'selectedPitchTypes': selectedPitchKeys},
-        options: Options(
-          headers: token != null ? {'Authorization': 'Bearer $token'} : {},
-          validateStatus: (s) => s != null && s < 500,
-        ),
-      );
+    final options = await _authOptions();
+    final response = await _dio.post(
+      '/api/v1/tutorial/complete',
+      data: {'selectedPitchCardIds': selectedPitchCardIds},
+      options: options,
+    );
 
-      // 엔드포인트가 아직 없으면(404 등) 로컬만 완료 처리하고 넘어간다.
-      if (response.statusCode == 200 ||
-          response.statusCode == 201 ||
-          response.statusCode == 204 ||
-          response.statusCode == 404 ||
-          response.statusCode == 501) {
-        await markCompletedLocally();
-        return;
-      }
-
-      throw TutorialException(
-        '튜토리얼 완료 처리에 실패했습니다. (${response.statusCode})',
+    if ((response.statusCode == 200 || response.statusCode == 201) &&
+        response.data is Map<String, dynamic>) {
+      return TutorialCompleteResult.fromJson(
+        response.data as Map<String, dynamic>,
       );
-    } on TutorialException {
-      rethrow;
-    } catch (_) {
-      // 네트워크 오류여도 로컬 완료는 허용 (오프라인/미구현 API)
-      await markCompletedLocally();
     }
+
+    throw _error(response, '튜토리얼 완료 처리에 실패했습니다.');
+  }
+
+  TutorialException _error(Response response, String fallback) {
+    final err = ApiError.fromResponse(
+      statusCode: response.statusCode,
+      data: response.data,
+      fallbackMessage: fallback,
+    );
+    final message = switch (response.statusCode) {
+      400 => err.message.isNotEmpty
+          ? err.message
+          : '선택한 구종이 올바르지 않습니다.',
+      401 => '로그인이 만료되었습니다. 다시 로그인해주세요.',
+      409 => '이미 튜토리얼을 완료했습니다.',
+      _ => err.message.isNotEmpty ? err.message : fallback,
+    };
+    return TutorialException(
+      message,
+      status: response.statusCode,
+      code: err.code,
+    );
   }
 }
 
 class TutorialException implements Exception {
   final String message;
-  const TutorialException(this.message);
+  final int? status;
+  final String? code;
+
+  const TutorialException(this.message, {this.status, this.code});
+
+  bool get isAuthError => status == 401 || code == 'AUTH_INVALID';
+  bool get isAlreadyCompleted => status == 409;
 
   @override
   String toString() => message;

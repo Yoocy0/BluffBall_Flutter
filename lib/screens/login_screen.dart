@@ -22,7 +22,7 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       await loginFn();
       if (mounted) {
-        await navigateAfterAuth(context);
+        await navigateAfterLogin(context);
       }
     } on AuthException catch (e) {
       if (mounted) _showError(e.message);

@@ -56,7 +56,8 @@ class _LandingScreenState extends State<LandingScreen>
     if (!mounted) return;
 
     if (hasValidSession) {
-      await navigateAfterAuth(context);
+      // 앱 킬/재실행: 세션만 복원 → 홈. 튜토리얼은 로그인 시에만.
+      await navigateAfterSessionRestore(context);
     } else {
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
