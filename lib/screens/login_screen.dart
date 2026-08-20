@@ -1,9 +1,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
+import '../services/post_auth_navigation.dart';
 import '../widgets/game_background.dart';
 import '../widgets/bluffball_logo.dart';
-import 'home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -22,9 +22,7 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       await loginFn();
       if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const HomeScreen()),
-        );
+        await navigateAfterAuth(context);
       }
     } on AuthException catch (e) {
       if (mounted) _showError(e.message);

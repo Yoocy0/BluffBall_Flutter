@@ -11,6 +11,7 @@ import 'login_screen.dart';
 import 'match_found_screen.dart';
 import 'matchmaking_screen.dart';
 import '../models/game_mode.dart';
+import '../tutorial/tutorial_flow_screen.dart';
 
 // ─── 색상 팔레트 ────────────────────────────────────────────────────────────
 const _kDarkBase = Color(0xFF161D0B);
@@ -465,6 +466,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             color: Colors.white24, borderRadius: BorderRadius.circular(2),
           )),
           const SizedBox(height: 24),
+          ListTile(
+            leading: const Icon(Icons.school_rounded, color: _kGold),
+            title: const Text('튜토리얼 다시하기',
+                style: TextStyle(color: Colors.white, fontSize: 16)),
+            subtitle: Text(
+              '보상 없이 데모만 진행',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.45),
+                fontSize: 12,
+              ),
+            ),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const TutorialFlowScreen(isReplay: true),
+                ),
+              );
+            },
+          ),
           ListTile(
             leading: const Icon(Icons.logout_rounded, color: Color(0xFFFF6B6B)),
             title: const Text('로그아웃',
