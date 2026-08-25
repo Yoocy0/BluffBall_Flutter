@@ -5,6 +5,7 @@ import '../models/setup_number_request.dart';
 import '../services/game_websocket_service.dart';
 import '../services/match_service.dart';
 import '../services/token_storage.dart';
+import '../utils/api_error_ui.dart';
 import '../widgets/opponent_disconnected_overlay.dart';
 import 'pitch_selection_screen.dart';
 
@@ -233,17 +234,20 @@ class _SetupScreenState extends State<SetupScreen> {
 
   void _showSnackBar(String message, {bool isError = false}) {
     if (!mounted) return;
+    if (isError) {
+      showErrorDialog(context, message);
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message,
             style: const TextStyle(fontWeight: FontWeight.w600)),
-        backgroundColor:
-            isError ? const Color(0xFFD32F2F) : const Color(0xFF388E3C),
+        backgroundColor: const Color(0xFF388E3C),
         behavior: SnackBarBehavior.floating,
         shape:
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         margin: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-        duration: Duration(seconds: isError ? 4 : 2),
+        duration: const Duration(seconds: 2),
       ),
     );
   }

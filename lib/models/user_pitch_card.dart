@@ -42,6 +42,9 @@ class UserPitchCard {
       timingEnhancement.toUpperCase() != 'NONE' &&
       timingEnhancement.isNotEmpty;
 
+  /// 변화량·타이밍 중 하나라도 강화된 경우 (되돌리기 가능).
+  bool get isEnhanced => changeAmountEnhanced || timingEnhanced;
+
   factory UserPitchCard.fromJson(Map<String, dynamic> json) => UserPitchCard(
         userPitchCardId: (json['userPitchCardId'] as num).toInt(),
         cardId: (json['cardId'] as num).toInt(),

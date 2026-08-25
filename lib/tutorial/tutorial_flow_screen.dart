@@ -5,6 +5,7 @@ import '../models/card_info.dart';
 import '../models/tutorial_models.dart';
 import '../screens/home_screen.dart';
 import '../services/tutorial_service.dart';
+import '../widgets/app_dialog.dart';
 import '../widgets/dice_widget.dart';
 import 'tutorial_coach_overlay.dart';
 import 'tutorial_coord_math.dart';
@@ -335,42 +336,11 @@ class _TutorialFlowScreenState extends State<TutorialFlowScreen> {
 
   Future<void> _showPopup(String title, {String? detail}) async {
     if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E2810),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(
-          title,
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w900,
-            fontSize: 16,
-          ),
-        ),
-        content: detail == null
-            ? null
-            : Text(
-                detail,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.75),
-                  height: 1.4,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text(
-              '확인',
-              style: TextStyle(
-                color: Color(0xFFFFD700),
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-        ],
-      ),
+    await showAppAlertDialog(
+      context,
+      title: detail == null ? null : title,
+      message: detail ?? title,
+      confirmLabel: '확인',
     );
   }
 
