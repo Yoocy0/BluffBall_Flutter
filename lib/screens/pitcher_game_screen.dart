@@ -264,7 +264,7 @@ class _PitcherGameScreenState extends State<PitcherGameScreen>
                   const Icon(Icons.sports_baseball_rounded, color: Color(0xFFFFD700), size: 18),
                   const SizedBox(width: 8),
                   Text(
-                    '${_selectedCard?.name ?? ''}  ·  ${_selectedCoord?.coordinateNumber ?? 0}번'
+                    '${_selectedCard?.displayName ?? ''}  ·  ${_selectedCoord?.coordinateNumber ?? 0}번'
                     '${_selectedCoord?.isStrike == true ? '  S' : ''}',
                     style: const TextStyle(
                       color: Color(0xFFFFD700), fontSize: 16, fontWeight: FontWeight.w800,
@@ -330,7 +330,7 @@ class _PitcherGameScreenState extends State<PitcherGameScreen>
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          _chip(Icons.style_rounded, _selectedCard?.name ?? '─', _selectedCard != null, _selectedCard?.timingColor ?? Colors.white.withValues(alpha: 0.25)),
+          _chip(Icons.style_rounded, _selectedCard?.displayName ?? '─', _selectedCard != null, _selectedCard?.timingColor ?? Colors.white.withValues(alpha: 0.25)),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Text('·', style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 20, fontWeight: FontWeight.w300)),
@@ -639,7 +639,7 @@ class _HandCardWidget extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.fromLTRB(7, 10, 7, 7),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(card.name, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800, height: 1.2, shadows: [Shadow(blurRadius: 3, color: Colors.black54)]), maxLines: 2, overflow: TextOverflow.ellipsis),
+            Text(card.displayName, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800, height: 1.2, shadows: [Shadow(blurRadius: 3, color: Colors.black54)]), maxLines: 2, overflow: TextOverflow.ellipsis),
             const Spacer(),
             Center(child: Text(card.directionArrow, style: TextStyle(color: card.timingColor, fontSize: 32, fontWeight: FontWeight.w900, height: 1, shadows: [Shadow(color: card.timingColor.withValues(alpha: 0.45), blurRadius: 10)]))),
             const Spacer(),

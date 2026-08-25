@@ -1085,7 +1085,7 @@ class _PitchCardWidget extends StatelessWidget {
                 children: [
                   // 구종 이름
                   Text(
-                    card.name,
+                    card.displayName,
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 12.5,
@@ -1235,7 +1235,7 @@ class _SmallCardWidget extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      card.name,
+                      card.displayName,
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 9,

@@ -127,7 +127,7 @@ class _TutorialFlowScreenState extends State<TutorialFlowScreen> {
               ),
               const CoachBeat(
                 text:
-                    '상대 구종: 포심 패스트볼.\n'
+                    '상대 구종: 포심.\n'
                     '타이밍 「이른」 · 방향 직구 · 변화량 0.\n'
                     '강화 카드로 이 값들이 달라질 수 있어요.',
                 spotlight: TutorialSpotlight.batterTiming,
@@ -651,7 +651,7 @@ class _TutorialFlowScreenState extends State<TutorialFlowScreen> {
           title: '시작 구종 지급',
           subtitle: widget.isReplay
               ? '재플레이 · 지급 없음'
-              : '${fixed?.name ?? '포심'} + 변화구 $need장',
+              : '${CardInfo.shortPitchName(fixed?.name ?? '포심')} + 변화구 $need장',
         ),
         if (_statusLoading)
           const Padding(
@@ -728,7 +728,7 @@ class _TutorialFlowScreenState extends State<TutorialFlowScreen> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      '기본 지급: ${fixed.name}',
+                      '기본 지급: ${CardInfo.shortPitchName(fixed.name)}',
                       style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w900,
@@ -772,7 +772,7 @@ class _TutorialFlowScreenState extends State<TutorialFlowScreen> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          p.name,
+                          CardInfo.shortPitchName(p.name),
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.w900,
@@ -875,13 +875,15 @@ class _TutorialFlowScreenState extends State<TutorialFlowScreen> {
 
   Widget _finishedOverlay() {
     final names = _granted.isNotEmpty
-        ? _granted.map((e) => e.name).join(' · ')
+        ? _granted.map((e) => CardInfo.shortPitchName(e.name)).join(' · ')
         : (_tutorialStatus?.selectableStarterPitches
                 .where((p) => _selectedCardIds.contains(p.cardId))
-                .map((p) => p.name)
+                .map((p) => CardInfo.shortPitchName(p.name))
                 .join(' · ') ??
             '');
-    final fixedName = _tutorialStatus?.fixedStarterPitch?.name ?? '포심 패스트볼';
+    final fixedName = CardInfo.shortPitchName(
+      _tutorialStatus?.fixedStarterPitch?.name ?? '포심',
+    );
 
     return Positioned.fill(
       child: ColoredBox(

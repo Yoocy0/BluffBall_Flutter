@@ -19,6 +19,17 @@ class CardInfo {
     required this.timing,
   });
 
+  /// UI 표시용. 「포심 패스트볼」→「포심」처럼 끝의 「패스트볼」은 뺀다.
+  String get displayName => shortPitchName(name);
+
+  /// 「OO 패스트볼」/「OO패스트볼」이면 앞부분만, 그 외는 그대로.
+  static String shortPitchName(String name) {
+    final trimmed = name.trim();
+    final stripped =
+        trimmed.replaceFirst(RegExp(r'\s*패스트볼\s*$'), '').trim();
+    return stripped.isEmpty ? trimmed : stripped;
+  }
+
   // ── Direction → 화살표 ──────────────────────────────────────────────────
 
   String get directionArrow => switch (direction.toUpperCase()) {
