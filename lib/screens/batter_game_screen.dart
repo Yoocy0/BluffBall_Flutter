@@ -13,6 +13,7 @@ import '../services/game_flow_controller.dart';
 import '../services/game_match_meta_service.dart';
 import '../services/game_websocket_service.dart';
 import '../services/token_storage.dart';
+import '../utils/api_error_ui.dart';
 import '../widgets/match_info_overlay.dart';
 import '../widgets/opponent_disconnected_overlay.dart';
 import '../widgets/mode_background.dart';
@@ -310,10 +311,7 @@ class _BatterGameScreenState extends State<BatterGameScreen>
 
     if (!sent && mounted) {
       setState(() => _phase = _BatterPhase.active);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('서버 전송 실패. 다시 시도해주세요.'),
-        backgroundColor: Colors.red,
-      ));
+      showErrorDialog(context, '서버 전송 실패. 다시 시도해주세요.');
     }
   }
 

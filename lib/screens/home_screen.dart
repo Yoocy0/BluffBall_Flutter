@@ -5,13 +5,16 @@ import '../services/match_service.dart';
 import '../services/match_session_storage.dart';
 import '../services/game_session_restore_service.dart';
 import '../models/game_session_state_exception.dart';
+import '../utils/api_error_ui.dart';
+import '../widgets/app_dialog.dart';
 import '../widgets/board_game_box.dart';
 import '../widgets/exit_confirm_dialogs.dart';
+import '../tutorial/tutorial_flow_screen.dart';
+import 'cards_screen.dart';
 import 'login_screen.dart';
 import 'match_found_screen.dart';
 import 'matchmaking_screen.dart';
 import '../models/game_mode.dart';
-import '../tutorial/tutorial_flow_screen.dart';
 
 // ─── 색상 팔레트 ────────────────────────────────────────────────────────────
 const _kDarkBase = Color(0xFF161D0B);
@@ -85,63 +88,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _showReconnectDialog(SavedMatchSession saved) async {
     _reconnectDialogVisible = true;
     try {
-      final reconnect = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => AlertDialog(
-          backgroundColor: const Color(0xFF2A3518),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: _kGold.withValues(alpha: 0.45)),
-          ),
-          icon: Icon(
-            Icons.sports_baseball_rounded,
-            color: _kGold.withValues(alpha: 0.9),
-            size: 32,
-          ),
-          title: const Text(
-            '진행 중인 매치가 있습니다',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          content: const Text(
-            '중단된 경기를 이어서 진행할 수 있습니다.',
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: 14,
-              height: 1.4,
-            ),
-          ),
-          actionsAlignment: MainAxisAlignment.center,
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: Text(
-                '나중에',
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
-              ),
-            ),
-            const SizedBox(width: 8),
-            FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              style: FilledButton.styleFrom(
-                backgroundColor: _kGold,
-                foregroundColor: const Color(0xFF2A1F05),
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              child: const Text(
-                '재접속',
-                style: TextStyle(fontWeight: FontWeight.w800),
-              ),
-            ),
-          ],
+      final reconnect = await showAppConfirmDialog(
+        context,
+        icon: Icon(
+          Icons.sports_baseball_rounded,
+          color: _kGold.withValues(alpha: 0.9),
+          size: 32,
         ),
+        title: '진행 중인 매치가 있습니다',
+        message: '중단된 경기를 이어서 진행할 수 있습니다.',
+        cancelLabel: '나중에',
+        confirmLabel: '재접속',
       );
 
       if (!mounted || reconnect != true) return;
@@ -177,32 +134,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         if (mounted) setState(() => _pendingMatchSession = null);
       }
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.message),
-            backgroundColor: const Color(0xFF3A1A05),
-          ),
-        );
+        showErrorDialog(context, e.message);
       }
     } on StateError catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.message),
-            backgroundColor: const Color(0xFF3A1A05),
-          ),
-        );
+        showErrorDialog(context, e.message);
       }
     } catch (e) {
       // ignore: avoid_print
       print('[Restore] 실패: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('게임 복원에 실패했습니다. ($e)'),
-            backgroundColor: const Color(0xFF3A1A05),
-          ),
-        );
+        showErrorDialog(context, '게임 복원에 실패했습니다. ($e)');
       }
     } finally {
       if (mounted) setState(() => _restoreInProgress = false);
@@ -297,7 +239,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       case 0:
         return const _ShopScreen();
       case 2:
-        return const _CardsScreen();
+        return const CardsScreen();
       default:
         return const BoardGameBox(heroTagOverride: BoardGameBox.heroTag);
     }
@@ -605,12 +547,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       case _ShowdownOpponent.vsUser:
         await _joinSingleMode();
       case _ShowdownOpponent.vsBot:
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('vs Bot은 곧 지원될 예정입니다.'),
-            backgroundColor: Color(0xFF3A1A05),
-          ),
-        );
+        showErrorDialog(context, 'vs Bot은 곧 지원될 예정입니다.');
     }
   }
 
@@ -655,21 +592,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
     } on MatchException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.message),
-            backgroundColor: const Color(0xFF3A1A05),
-          ),
-        );
+        showErrorDialog(context, e.message);
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('네트워크 오류가 발생했습니다.'),
-            backgroundColor: Color(0xFF3A1A05),
-          ),
-        );
+        showErrorDialog(context, '네트워크 오류가 발생했습니다.');
       }
     } finally {
       if (mounted) setState(() => _singleModeLoading = false);
@@ -702,30 +629,6 @@ class _ShopScreen extends StatelessWidget {
               color: _kGold.withValues(alpha: 0.25)),
           const SizedBox(height: 16),
           Text('상점', style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.2),
-            fontSize: 18, fontWeight: FontWeight.w700, letterSpacing: 4,
-          )),
-        ],
-      ),
-    );
-  }
-}
-
-// ─── 카드 화면 (빈 화면) ─────────────────────────────────────────────────────
-
-class _CardsScreen extends StatelessWidget {
-  const _CardsScreen();
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.style_rounded, size: 64,
-              color: _kGold.withValues(alpha: 0.25)),
-          const SizedBox(height: 16),
-          Text('카드', style: TextStyle(
             color: Colors.white.withValues(alpha: 0.2),
             fontSize: 18, fontWeight: FontWeight.w700, letterSpacing: 4,
           )),

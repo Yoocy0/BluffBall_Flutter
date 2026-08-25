@@ -5,6 +5,7 @@ import '../models/card_info.dart';
 import '../models/tutorial_models.dart';
 import '../screens/home_screen.dart';
 import '../services/tutorial_service.dart';
+import '../widgets/app_dialog.dart';
 import '../widgets/dice_widget.dart';
 import 'tutorial_coach_overlay.dart';
 import 'tutorial_coord_math.dart';
@@ -127,7 +128,7 @@ class _TutorialFlowScreenState extends State<TutorialFlowScreen> {
               ),
               const CoachBeat(
                 text:
-                    '상대 구종: 포심 패스트볼.\n'
+                    '상대 구종: 포심.\n'
                     '타이밍 「이른」 · 방향 직구 · 변화량 0.\n'
                     '강화 카드로 이 값들이 달라질 수 있어요.',
                 spotlight: TutorialSpotlight.batterTiming,
@@ -335,42 +336,11 @@ class _TutorialFlowScreenState extends State<TutorialFlowScreen> {
 
   Future<void> _showPopup(String title, {String? detail}) async {
     if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E2810),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(
-          title,
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w900,
-            fontSize: 16,
-          ),
-        ),
-        content: detail == null
-            ? null
-            : Text(
-                detail,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.75),
-                  height: 1.4,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text(
-              '확인',
-              style: TextStyle(
-                color: Color(0xFFFFD700),
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-        ],
-      ),
+    await showAppAlertDialog(
+      context,
+      title: detail == null ? null : title,
+      message: detail ?? title,
+      confirmLabel: '확인',
     );
   }
 
@@ -651,7 +621,7 @@ class _TutorialFlowScreenState extends State<TutorialFlowScreen> {
           title: '시작 구종 지급',
           subtitle: widget.isReplay
               ? '재플레이 · 지급 없음'
-              : '${fixed?.name ?? '포심'} + 변화구 $need장',
+              : '${CardInfo.shortPitchName(fixed?.name ?? '포심')} + 변화구 $need장',
         ),
         if (_statusLoading)
           const Padding(
@@ -728,7 +698,7 @@ class _TutorialFlowScreenState extends State<TutorialFlowScreen> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      '기본 지급: ${fixed.name}',
+                      '기본 지급: ${CardInfo.shortPitchName(fixed.name)}',
                       style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w900,
@@ -772,7 +742,7 @@ class _TutorialFlowScreenState extends State<TutorialFlowScreen> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          p.name,
+                          CardInfo.shortPitchName(p.name),
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.w900,
@@ -875,13 +845,15 @@ class _TutorialFlowScreenState extends State<TutorialFlowScreen> {
 
   Widget _finishedOverlay() {
     final names = _granted.isNotEmpty
-        ? _granted.map((e) => e.name).join(' · ')
+        ? _granted.map((e) => CardInfo.shortPitchName(e.name)).join(' · ')
         : (_tutorialStatus?.selectableStarterPitches
                 .where((p) => _selectedCardIds.contains(p.cardId))
-                .map((p) => p.name)
+                .map((p) => CardInfo.shortPitchName(p.name))
                 .join(' · ') ??
             '');
-    final fixedName = _tutorialStatus?.fixedStarterPitch?.name ?? '포심 패스트볼';
+    final fixedName = CardInfo.shortPitchName(
+      _tutorialStatus?.fixedStarterPitch?.name ?? '포심',
+    );
 
     return Positioned.fill(
       child: ColoredBox(

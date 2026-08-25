@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../navigation/app_navigator.dart';
 import '../screens/login_screen.dart';
+import '../utils/api_error_ui.dart';
 import 'game_websocket_service.dart';
 import 'token_storage.dart';
 
@@ -32,12 +33,7 @@ class AuthSessionManager {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           final ctx = rootNavigatorKey.currentContext;
           if (ctx == null) return;
-          ScaffoldMessenger.of(ctx).showSnackBar(
-            SnackBar(
-              content: Text(message),
-              backgroundColor: const Color(0xFF3A1A05),
-            ),
-          );
+          showErrorDialog(ctx, message);
         });
       }
     } finally {

@@ -9,6 +9,7 @@ import '../services/game_flow_controller.dart';
 import '../services/game_websocket_service.dart';
 import '../services/match_service.dart';
 import '../services/token_storage.dart';
+import '../utils/api_error_ui.dart';
 import '../widgets/mode_background.dart';
 import '../widgets/opponent_disconnected_overlay.dart';
 import '../widgets/setup_numbers_summary.dart';
@@ -392,17 +393,20 @@ class _PitchSelectionScreenState extends State<PitchSelectionScreen>
 
   void _showSnackBar(String message, {bool isError = false}) {
     if (!mounted) return;
+    if (isError) {
+      showErrorDialog(context, message);
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message,
             style: const TextStyle(fontWeight: FontWeight.w600)),
-        backgroundColor:
-            isError ? const Color(0xFFD32F2F) : const Color(0xFF388E3C),
+        backgroundColor: const Color(0xFF388E3C),
         behavior: SnackBarBehavior.floating,
         shape:
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         margin: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-        duration: Duration(seconds: isError ? 4 : 2),
+        duration: const Duration(seconds: 2),
       ),
     );
   }
@@ -1085,7 +1089,7 @@ class _PitchCardWidget extends StatelessWidget {
                 children: [
                   // 구종 이름
                   Text(
-                    card.name,
+                    card.displayName,
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 12.5,
@@ -1235,7 +1239,7 @@ class _SmallCardWidget extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      card.name,
+                      card.displayName,
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 9,

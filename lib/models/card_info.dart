@@ -19,9 +19,23 @@ class CardInfo {
     required this.timing,
   });
 
+  /// UI 표시용. 「포심 패스트볼」→「포심」처럼 끝의 「패스트볼」은 뺀다.
+  String get displayName => shortPitchName(name);
+
+  /// 「OO 패스트볼」/「OO패스트볼」이면 앞부분만, 그 외는 그대로.
+  static String shortPitchName(String name) {
+    final trimmed = name.trim();
+    final stripped =
+        trimmed.replaceFirst(RegExp(r'\s*패스트볼\s*$'), '').trim();
+    return stripped.isEmpty ? trimmed : stripped;
+  }
+
   // ── Direction → 화살표 ──────────────────────────────────────────────────
 
-  String get directionArrow => switch (direction.toUpperCase()) {
+  String get directionArrow => directionArrowFor(direction);
+
+  static String directionArrowFor(String direction) =>
+      switch (direction.toUpperCase()) {
         'UP' => '↑',
         'DOWN' => '↓',
         'SIDE' => '→',
@@ -38,16 +52,24 @@ class CardInfo {
 
   // ── Timing → 한국어 ────────────────────────────────────────────────────
 
-  String get timingLabel => switch (timing.toUpperCase()) {
-        'EARLY' => '이른',
+  String get timingLabel => timingLabelFor(timing);
+
+  static String timingLabelFor(String timing) =>
+      switch (timing.toUpperCase()) {
+        'EARLY' || 'FAST' || 'FASTER' || 'TOO_EARLY' => '이른',
         'NORMAL' => '보통',
-        'LATE' => '늦은',
+        'LATE' || 'SLOW' || 'SLOWER' || 'TOO_LATE' => '늦은',
         _ => timing,
       };
 
-  Color get timingColor => switch (timing.toUpperCase()) {
-        'EARLY' => const Color(0xFF4CAF50),
-        'LATE' => const Color(0xFFFF5252),
+  Color get timingColor => timingColorFor(timing);
+
+  static Color timingColorFor(String timing) =>
+      switch (timing.toUpperCase()) {
+        'EARLY' || 'FAST' || 'FASTER' || 'TOO_EARLY' =>
+          const Color(0xFF4CAF50),
+        'LATE' || 'SLOW' || 'SLOWER' || 'TOO_LATE' =>
+          const Color(0xFFFF5252),
         _ => const Color(0xFFFFB300),
       };
 
