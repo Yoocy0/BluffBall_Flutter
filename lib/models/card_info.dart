@@ -32,7 +32,10 @@ class CardInfo {
 
   // ── Direction → 화살표 ──────────────────────────────────────────────────
 
-  String get directionArrow => switch (direction.toUpperCase()) {
+  String get directionArrow => directionArrowFor(direction);
+
+  static String directionArrowFor(String direction) =>
+      switch (direction.toUpperCase()) {
         'UP' => '↑',
         'DOWN' => '↓',
         'SIDE' => '→',
@@ -49,16 +52,24 @@ class CardInfo {
 
   // ── Timing → 한국어 ────────────────────────────────────────────────────
 
-  String get timingLabel => switch (timing.toUpperCase()) {
-        'EARLY' => '이른',
+  String get timingLabel => timingLabelFor(timing);
+
+  static String timingLabelFor(String timing) =>
+      switch (timing.toUpperCase()) {
+        'EARLY' || 'FAST' || 'FASTER' || 'TOO_EARLY' => '이른',
         'NORMAL' => '보통',
-        'LATE' => '늦은',
+        'LATE' || 'SLOW' || 'SLOWER' || 'TOO_LATE' => '늦은',
         _ => timing,
       };
 
-  Color get timingColor => switch (timing.toUpperCase()) {
-        'EARLY' => const Color(0xFF4CAF50),
-        'LATE' => const Color(0xFFFF5252),
+  Color get timingColor => timingColorFor(timing);
+
+  static Color timingColorFor(String timing) =>
+      switch (timing.toUpperCase()) {
+        'EARLY' || 'FAST' || 'FASTER' || 'TOO_EARLY' =>
+          const Color(0xFF4CAF50),
+        'LATE' || 'SLOW' || 'SLOWER' || 'TOO_LATE' =>
+          const Color(0xFFFF5252),
         _ => const Color(0xFFFFB300),
       };
 

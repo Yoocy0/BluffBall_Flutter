@@ -7,11 +7,12 @@ import '../services/game_session_restore_service.dart';
 import '../models/game_session_state_exception.dart';
 import '../widgets/board_game_box.dart';
 import '../widgets/exit_confirm_dialogs.dart';
+import '../tutorial/tutorial_flow_screen.dart';
+import 'cards_screen.dart';
 import 'login_screen.dart';
 import 'match_found_screen.dart';
 import 'matchmaking_screen.dart';
 import '../models/game_mode.dart';
-import '../tutorial/tutorial_flow_screen.dart';
 
 // ─── 색상 팔레트 ────────────────────────────────────────────────────────────
 const _kDarkBase = Color(0xFF161D0B);
@@ -297,7 +298,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       case 0:
         return const _ShopScreen();
       case 2:
-        return const _CardsScreen();
+        return const CardsScreen();
       default:
         return const BoardGameBox(heroTagOverride: BoardGameBox.heroTag);
     }
@@ -702,30 +703,6 @@ class _ShopScreen extends StatelessWidget {
               color: _kGold.withValues(alpha: 0.25)),
           const SizedBox(height: 16),
           Text('상점', style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.2),
-            fontSize: 18, fontWeight: FontWeight.w700, letterSpacing: 4,
-          )),
-        ],
-      ),
-    );
-  }
-}
-
-// ─── 카드 화면 (빈 화면) ─────────────────────────────────────────────────────
-
-class _CardsScreen extends StatelessWidget {
-  const _CardsScreen();
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.style_rounded, size: 64,
-              color: _kGold.withValues(alpha: 0.25)),
-          const SizedBox(height: 16),
-          Text('카드', style: TextStyle(
             color: Colors.white.withValues(alpha: 0.2),
             fontSize: 18, fontWeight: FontWeight.w700, letterSpacing: 4,
           )),
