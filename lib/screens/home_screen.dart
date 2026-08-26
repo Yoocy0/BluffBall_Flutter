@@ -14,6 +14,7 @@ import 'cards_screen.dart';
 import 'login_screen.dart';
 import 'match_found_screen.dart';
 import 'matchmaking_screen.dart';
+import 'shop_screen.dart';
 import '../models/game_mode.dart';
 
 // ─── 색상 팔레트 ────────────────────────────────────────────────────────────
@@ -237,7 +238,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget _buildContentForIndex() {
     switch (_navIndex) {
       case 0:
-        return const _ShopScreen();
+        return const ShopScreen();
       case 2:
         return const CardsScreen();
       default:
@@ -319,10 +320,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         const Spacer(),
         const _CurrencyBadge(
           icon: Icons.monetization_on_rounded, iconColor: _kGold, value: '8,350',
-        ),
-        const SizedBox(width: 6),
-        const _CurrencyBadge(
-          icon: Icons.diamond_rounded, iconColor: Color(0xFF72C6EF), value: '372',
         ),
         const SizedBox(width: 8),
         _TopIconButton(
@@ -611,30 +608,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         (_) => false,
       );
     }
-  }
-}
-
-// ─── 상점 화면 (빈 화면) ─────────────────────────────────────────────────────
-
-class _ShopScreen extends StatelessWidget {
-  const _ShopScreen();
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.storefront_rounded, size: 64,
-              color: _kGold.withValues(alpha: 0.25)),
-          const SizedBox(height: 16),
-          Text('상점', style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.2),
-            fontSize: 18, fontWeight: FontWeight.w700, letterSpacing: 4,
-          )),
-        ],
-      ),
-    );
   }
 }
 

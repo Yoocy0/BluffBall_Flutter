@@ -76,10 +76,16 @@ class CardInfo {
   // ── JSON ───────────────────────────────────────────────────────────────
 
   factory CardInfo.fromJson(Map<String, dynamic> json) => CardInfo(
-        cardId: (json['cardId'] as num).toInt(),
-        name: json['name'] as String,
-        changeAmount: (json['changeAmount'] as num).toInt(),
-        direction: json['direction'] as String,
-        timing: json['timing'] as String,
+        cardId: (json['cardId'] as num?)?.toInt() ??
+            (json['id'] as num?)?.toInt() ??
+            0,
+        name: json['name'] as String? ?? '',
+        changeAmount: (json['changeAmount'] as num?)?.toInt() ??
+            (json['baseChangeAmount'] as num?)?.toInt() ??
+            0,
+        direction: json['direction'] as String? ?? '',
+        timing: (json['timing'] as String?) ??
+            (json['baseTiming'] as String?) ??
+            '',
       );
 }
